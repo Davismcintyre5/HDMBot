@@ -1,7 +1,7 @@
-require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const fs = require('fs');
-const path = require('path');
 const os = require('os');
 
 function fail(msg) {
@@ -55,6 +55,12 @@ if (BOT_OWNER_NUMBER_RAW && !/^\d{10,15}$/.test(BOT_OWNER_NUMBER_RAW)) {
   fail('BOT_OWNER_NUMBER must be 10-15 digits if set');
 }
 const BOT_OWNER_NUMBER = BOT_OWNER_NUMBER_RAW;
+
+const OWNER_LID_RAW = optStr('OWNER_LID', '');
+if (OWNER_LID_RAW && !/^\d{6,25}$/.test(OWNER_LID_RAW)) {
+  fail('OWNER_LID must be 6-25 digits if set');
+}
+const OWNER_LID = OWNER_LID_RAW;
 
 const DEFAULT_PREFIX = optStr('DEFAULT_PREFIX', '.');
 if (!/^[!-/:-@\[-`{-~]$/.test(DEFAULT_PREFIX)) {
@@ -205,6 +211,7 @@ const env = {
   OWNER_NAME,
   OWNER_NUMBER,
   BOT_OWNER_NUMBER,
+  OWNER_LID,
   DEFAULT_PREFIX,
   SESSION_ID,
   AUTO_CONNECT_DEFAULT,
