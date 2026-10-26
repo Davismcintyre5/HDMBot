@@ -11,6 +11,7 @@ const mongoose = require('mongoose');
 
 const db = require('./config/db');
 const socket = require('./config/socket');
+const keepAlive = require('./config/keepAlive');
 const sessionManager = require('./whatsapp/sessionManager');
 const commandRegistry = require('./core/commandRegistry');
 
@@ -60,6 +61,7 @@ function printBanner() {
     ['Cloudinary', env.CLOUDINARY_ENABLED ? 'configured' : 'disabled'],
     ['Sessions', String(sessionCount)],
     ['Client', hasClientBuild ? 'dist' : 'not built'],
+    ['KeepAlive', env.KEEP_ALIVE_ENABLED ? 'on' : 'off'],
     ['Time', new Date().toISOString()]
   ];
   const width = 44;
@@ -106,6 +108,8 @@ async function bootstrap() {
 
   await require('./schedulers').startAll();
 
+  keepAlive.startKeepAlive();
+
   await new Promise((resolve, reject) => {
     httpServer.once('error', reject);
     httpServer.listen(env.PORT, () => {
@@ -131,6 +135,12 @@ async function shutdown(signal) {
     process.exit(1);
   }, env.SHUTDOWN_FLUSH_TIMEOUT_MS + 7000);
   hardTimeout.unref();
+
+  try {
+    keepAlive.stopKeepAlive();
+  } catch (err) {
+    logger.error({ err }, 'keepAlive stop failed');
+  }
 
   try {
     await new Promise((r) => httpServer.close(() => r()));

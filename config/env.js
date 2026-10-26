@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 
 const fs = require('fs');
 const path = require('path');
@@ -159,6 +159,10 @@ const RATE_LIMIT_QR_MAX = optInt('RATE_LIMIT_QR_MAX', 30, 1, 1000);
 const RATE_LIMIT_SYNC_WINDOW_MS = optInt('RATE_LIMIT_SYNC_WINDOW_MS', 60000, 1000, 3600000);
 const RATE_LIMIT_SYNC_MAX = optInt('RATE_LIMIT_SYNC_MAX', 5, 1, 1000);
 
+const API_URL = optStr('API_URL', '');
+const KEEP_ALIVE_ENABLED = optBool('KEEP_ALIVE_ENABLED', false);
+const KEEP_ALIVE_VERBOSE = optBool('KEEP_ALIVE_VERBOSE', false);
+
 const CORS_ORIGINS = optStr(
   'CORS_ORIGINS',
   'http://localhost:3000,http://localhost:5000,http://localhost:5173'
@@ -263,6 +267,10 @@ const env = {
   RATE_LIMIT_QR_MAX,
   RATE_LIMIT_SYNC_WINDOW_MS,
   RATE_LIMIT_SYNC_MAX,
+
+  API_URL,
+  KEEP_ALIVE_ENABLED,
+  KEEP_ALIVE_VERBOSE,
 
   CORS_ORIGINS,
   JWT_SECRET,
