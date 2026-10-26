@@ -1,66 +1,21 @@
 const axios = require('axios');
 const env = require('../../config/env');
 
-const PROVIDERS = {
-  hdm: {
-    name: 'HDM AI',
-    url: 'https://hdmaiserver.pxxl.click/api/v1/projects/general/public-chat',
-    keyEnv: 'HDM_AI_API_KEY',
-    kind: 'hdm'
-  },
-  deepseek: {
-    name: 'DeepSeek',
-    url: 'https://api.deepseek.com/v1/chat/completions',
-    model: 'deepseek-chat',
-    keyEnv: 'DEEPSEEK_API_KEY',
-    kind: 'openai'
-  },
-  gemini: {
-    name: 'Gemini',
-    model: 'gemini-1.5-flash',
-    keyEnv: 'GEMINI_API_KEY',
-    kind: 'gemini'
-  },
-  chatgpt: {
-    name: 'ChatGPT',
-    url: 'https://api.openai.com/v1/chat/completions',
-    model: 'gpt-4o-mini',
-    keyEnv: 'OPENAI_API_KEY',
-    kind: 'openai'
-  },
-  grok: {
-    name: 'Grok',
-    url: 'https://api.x.ai/v1/chat/completions',
-    model: 'grok-2-latest',
-    keyEnv: 'GROK_API_KEY',
-    kind: 'openai'
-  },
-  groq: {
-    name: 'Groq',
-    url: 'https://api.groq.com/openai/v1/chat/completions',
-    model: 'llama-3.3-70b-versatile',
-    keyEnv: 'GROQ_API_KEY',
-    kind: 'openai'
+async function queryHDMAI(prompt) {
+  const url = 'https://hdmaiserver.pxxl.click/api/v1/completion';
+  const key = env.HDM_AI_API_KEY || '';
+
+  if (!key) {
+    return { ok: false, error: '❌ HDM AI API key not set.' };
   }
-};
 
-function getKey(keyEnv) {
-  return process.env[keyEnv] || '';
-}
-
-async function callProvider(providerId, prompt) {
-  const p = PROVIDERS[providerId];
-  if (!p) throw new Error(`Unknown provider: ${providerId}`);
-
-  const key = getKey(p.keyEnv);
-  if (!key) throw new Error(`${p.name} API key not configured (${p.keyEnv})`);
-
-  const systemPrompt = `${env.BOT_NAME} is a helpful WhatsApp assistant. Keep responses concise and friendly.`;
-
-  if (p.kind === 'hdm') {
+  try {
     const { data } = await axios.post(
-      p.url,
-      { message: prompt, system_prompt: systemPrompt },
+      url,
+      {
+        message: prompt,
+        system_prompt: `You are ${env.BOT_NAME}, a helpful WhatsApp assistant. Keep responses concise and friendly.`
+      },
       {
         headers: {
           Authorization: `Bearer ${key}`,
@@ -69,50 +24,153 @@ async function callProvider(providerId, prompt) {
         timeout: 60000
       }
     );
-    if (data.success && data.data?.reply) return data.data.reply;
-    throw new Error(data.message || 'HDM AI: no response');
-  }
 
-  if (p.kind === 'gemini') {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${p.model}:generateContent?key=${key}`;
-    const { data } = await axios.post(
-      url,
-      {
-        contents: [{ parts: [{ text: `${systemPrompt}\n\n${prompt}` }] }]
-      },
-      { timeout: 30000 }
-    );
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error('Gemini: empty response');
-    return text;
-  }
-
-  const { data } = await axios.post(
-    p.url,
-    {
-      model: p.model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: prompt }
-      ],
-      temperature: 0.7,
-      max_tokens: 1000
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: 30000
+    if (data.success && data.data?.reply) {
+      return { ok: true, text: data.data.reply };
     }
-  );
-
-  const text = data?.choices?.[0]?.message?.content;
-  if (!text) throw new Error(`${p.name}: empty response`);
-  return text;
+    return { ok: false, error: `❌ HDM AI: ${data.message || 'No response'}` };
+  } catch (err) {
+    const msg = err.response?.data?.message || err.message;
+    return { ok: false, error: `❌ HDM AI: ${msg}` };
+  }
 }
 
+async function queryDeepSeek(prompt) {
+  const key = env.DEEPSEEK_API_KEY;
+  if (!key) return { ok: false, error: '❌ DeepSeek API key not set.' };
+
+  try {
+    const { data } = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: 'deepseek-chat',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.7,
+        max_tokens: 1000
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      }
+    );
+    return { ok: true, text: data.choices[0].message.content };
+  } catch (err) {
+    return { ok: false, error: `❌ DeepSeek: ${err.message}` };
+  }
+}
+
+async function queryGemini(prompt) {
+  const key = env.GEMINI_API_KEY;
+  if (!key) return { ok: false, error: '❌ Gemini API key not set.' };
+
+  try {
+    const { data } = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${key}`,
+      { contents: [{ parts: [{ text: prompt }] }] },
+      { timeout: 30000 }
+    );
+    return { ok: true, text: data.candidates[0].content.parts[0].text };
+  } catch (err) {
+    return { ok: false, error: `❌ Gemini: ${err.message}` };
+  }
+}
+
+async function queryChatGPT(prompt) {
+  const key = env.OPENAI_API_KEY;
+  if (!key) return { ok: false, error: '❌ ChatGPT API key not set.' };
+
+  try {
+    const { data } = await axios.post(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        model: 'gpt-3.5-turbo',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.7,
+        max_tokens: 1000
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      }
+    );
+    return { ok: true, text: data.choices[0].message.content };
+  } catch (err) {
+    return { ok: false, error: `❌ ChatGPT: ${err.message}` };
+  }
+}
+
+async function queryGrok(prompt) {
+  const key = env.GROK_API_KEY;
+  if (!key) return { ok: false, error: '❌ Grok API key not set.' };
+
+  try {
+    const { data } = await axios.post(
+      'https://api.x.ai/v1/chat/completions',
+      {
+        model: 'grok-2-latest',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.7,
+        max_tokens: 1000
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      }
+    );
+    return { ok: true, text: data.choices[0].message.content };
+  } catch (err) {
+    return { ok: false, error: `❌ Grok: ${err.message}` };
+  }
+}
+
+async function queryGroq(prompt) {
+  const key = env.GROQ_API_KEY;
+  if (!key) return { ok: false, error: '❌ Groq API key not set.' };
+
+  try {
+    const { data } = await axios.post(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.7,
+        max_tokens: 1000
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      }
+    );
+    return { ok: true, text: data.choices[0].message.content };
+  } catch (err) {
+    return { ok: false, error: `❌ Groq: ${err.message}` };
+  }
+}
+
+const PROVIDERS = {
+  hdm: { name: 'HDM AI', query: queryHDMAI, thinking: '🤖 Thinking...' },
+  deepseek: { name: 'DeepSeek', query: queryDeepSeek, thinking: '🤖 DeepSeek thinking...' },
+  gemini: { name: 'Gemini', query: queryGemini, thinking: '🧠 Gemini thinking...' },
+  chatgpt: { name: 'ChatGPT', query: queryChatGPT, thinking: '💬 ChatGPT thinking...' },
+  grok: { name: 'Grok', query: queryGrok, thinking: '🚀 Grok thinking...' },
+  groq: { name: 'Groq', query: queryGroq, thinking: '⚡ Groq thinking...' }
+};
+
 function makeCommand(providerId, meta) {
+  const provider = PROVIDERS[providerId];
+
   return {
     name: meta.name,
     aliases: meta.aliases || [],
@@ -126,19 +184,17 @@ function makeCommand(providerId, meta) {
       }
 
       const prompt = ctx.args.join(' ').trim();
-      if (!prompt) {
-        return ctx.reply('❌ Provide a question.');
-      }
+      if (!prompt) return ctx.reply('❌ Provide a question.');
 
-      await ctx.reply(meta.thinkingMessage || '🤖 Thinking...');
+      await ctx.reply(provider.thinking);
+      const result = await provider.query(prompt);
 
-      try {
-        const reply = await callProvider(providerId, prompt);
-        const trimmed = String(reply).trim().slice(0, 4000);
-        await ctx.reply(trimmed);
-      } catch (err) {
-        await ctx.reply(`❌ ${err.message}`);
-      }
+      if (!result.ok) return ctx.reply(result.error);
+
+      const text = String(result.text || '').trim().slice(0, 4000);
+      if (!text) return ctx.reply(`❌ ${provider.name}: empty response.`);
+
+      await ctx.reply(text);
     }
   };
 }
@@ -147,39 +203,32 @@ module.exports = [
   makeCommand('hdm', {
     name: 'ai',
     aliases: ['ask'],
-    desc: 'Ask AI (default: HDM AI)',
-    thinkingMessage: '🤖 Thinking...'
+    desc: 'Ask AI (HDM AI)'
   }),
   makeCommand('hdm', {
     name: 'hdmai',
-    desc: 'Ask HDM AI',
-    thinkingMessage: '🤖 HDM AI thinking...'
+    desc: 'Ask HDM AI'
   }),
   makeCommand('deepseek', {
     name: 'deepseek',
     aliases: ['ds'],
-    desc: 'Ask DeepSeek AI',
-    thinkingMessage: '🤖 DeepSeek thinking...'
+    desc: 'Ask DeepSeek AI'
   }),
   makeCommand('gemini', {
     name: 'gemini',
-    desc: 'Ask Gemini AI',
-    thinkingMessage: '🧠 Gemini thinking...'
+    desc: 'Ask Gemini AI'
   }),
   makeCommand('chatgpt', {
     name: 'chatgpt',
     aliases: ['gpt'],
-    desc: 'Ask ChatGPT',
-    thinkingMessage: '💬 ChatGPT thinking...'
+    desc: 'Ask ChatGPT'
   }),
   makeCommand('grok', {
     name: 'grok',
-    desc: 'Ask Grok AI',
-    thinkingMessage: '🚀 Grok thinking...'
+    desc: 'Ask Grok AI'
   }),
   makeCommand('groq', {
     name: 'groq',
-    desc: 'Ask Groq AI',
-    thinkingMessage: '⚡ Groq thinking...'
+    desc: 'Ask Groq AI'
   })
 ];
