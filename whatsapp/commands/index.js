@@ -3,14 +3,22 @@ const path = require('path');
 const logger = require('../../utils/logger');
 
 const COMMANDS_DIR = __dirname;
+const SKIP_FILES = new Set(['index.js']);
+
 const registry = new Map();
 const aliasMap = new Map();
 
 function listCategoryFiles() {
-  return fs
-    .readdirSync(COMMANDS_DIR)
-    .filter((f) => f.endsWith('.js') && f !== 'index.js')
-    .map((f) => f.replace(/\.js$/, ''));
+  try {
+    return fs
+      .readdirSync(COMMANDS_DIR)
+      .filter((f) => f.endsWith('.js') && !SKIP_FILES.has(f))
+      .map((f) => f.replace(/\.js$/, ''))
+      .sort();
+  } catch (err) {
+    logger.error({ err }, 'commands: readdir failed');
+    return [];
+  }
 }
 
 function loadCategory(name) {
@@ -75,16 +83,24 @@ for (const name of files) {
   categoryCounts[name] = loadCategory(name);
 }
 
+const totalCommands = registry.size;
+const totalAliases = aliasMap.size;
+const activeCategories = Object.entries(categoryCounts)
+  .filter(([, n]) => n > 0)
+  .map(([name]) => name);
+
 logger.info(
   {
-    commands: registry.size,
-    aliases: aliasMap.size,
-    categories: Object.entries(categoryCounts)
-      .filter(([, n]) => n > 0)
-      .map(([name]) => name)
+    commands: totalCommands,
+    aliases: totalAliases,
+    categories: activeCategories
   },
   'command registry loaded'
 );
+
+if (totalCommands === 0) {
+  logger.warn('command registry is empty — no category files found');
+}
 
 function all() {
   return Array.from(registry.values());
@@ -92,6 +108,10 @@ function all() {
 
 function get(name) {
   return registry.get(String(name || '').toLowerCase()) || null;
+}
+
+function has(name) {
+  return registry.has(String(name || '').toLowerCase());
 }
 
 function resolveAlias(name) {
@@ -118,11 +138,36 @@ function categories() {
   return Object.keys(byCategory()).sort();
 }
 
+function reload() {
+  for (const name of Object.keys(require.cache)) {
+    if (name.startsWith(COMMANDS_DIR) && !name.endsWith('index.js')) {
+      delete require.cache[name];
+    }
+  }
+  registry.clear();
+  aliasMap.clear();
+
+  for (const name of files) {
+    loadCategory(name);
+  }
+
+  logger.info(
+    {
+      commands: registry.size,
+      aliases: aliasMap.size,
+      categories: Object.keys(byCategory()).sort()
+    },
+    'command registry reloaded'
+  );
+}
+
 module.exports = {
   all,
   get,
+  has,
   resolveAlias,
   byCategory,
   aliases,
-  categories
+  categories,
+  reload
 };
