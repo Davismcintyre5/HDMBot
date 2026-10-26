@@ -3,7 +3,6 @@ const mongoose = require('mongoose');
 const { send } = require('../utils/apiResponse');
 const env = require('../config/env');
 const db = require('../config/db');
-const cloudinaryConfig = require('../config/cloudinary');
 const sessionManager = require('../whatsapp/sessionManager');
 const AdminUser = require('../models/AdminUser');
 const Session = require('../models/Session');
@@ -51,15 +50,21 @@ async function health(req, res) {
 }
 
 async function detailed(req, res) {
-  const dbHealth = await db.health().catch(() => ({ connected: false, readyState: 0 }));
+  const dbHealth = await db
+    .health()
+    .catch(() => ({ connected: false, readyState: 0 }));
 
   const memUsage = process.memoryUsage();
   const loadAvg = os.loadavg();
-
   const cpuModel = (os.cpus()[0] && os.cpus()[0].model) || 'unknown';
   const cpuCores = os.cpus().length;
 
-  let redisInfo = { status: env.REDIS_ENABLED ? 'enabled' : 'disabled', host: null, enabled: env.REDIS_ENABLED };
+  let redisInfo = {
+    status: env.REDIS_ENABLED ? 'enabled' : 'disabled',
+    host: null,
+    enabled: env.REDIS_ENABLED
+  };
+
   if (env.REDIS_ENABLED) {
     try {
       const client = require('../config/redis').createClient();
@@ -74,14 +79,21 @@ async function detailed(req, res) {
     }
   }
 
-  const collections = mongoose.connection.readyState === 1
-    ? await mongoose.connection.db.listCollections().toArray().catch(() => [])
-    : [];
+  const collections =
+    mongoose.connection.readyState === 1
+      ? await mongoose.connection.db
+          .listCollections()
+          .toArray()
+          .catch(() => [])
+      : [];
 
   let totalDocs = 0;
   const perCollection = {};
   for (const c of collections) {
-    const count = await mongoose.connection.db.collection(c.name).countDocuments().catch(() => 0);
+    const count = await mongoose.connection.db
+      .collection(c.name)
+      .countDocuments()
+      .catch(() => 0);
     perCollection[c.name] = count;
     totalDocs += count;
   }
@@ -103,7 +115,16 @@ async function detailed(req, res) {
     timestamp: { $gte: new Date(Date.now() - 24 * 3600 * 1000) }
   }).catch(() => 0);
 
-  const lastEvent = await EventLog.findOne().sort({ timestamp: -1 }).lean().catch(() => null);
+  const lastEvent = await EventLog.findOne()
+    .sort({ timestamp: -1 })
+    .lean()
+    .catch(() => null);
+
+  const serverUrl =
+    env.API_URL ||
+    (env.isProd
+      ? `http://${os.hostname()}:${env.PORT}`
+      : `http://localhost:${env.PORT}`);
 
   const payload = {
     status: dbHealth.connected ? 'healthy' : 'degraded',
@@ -111,7 +132,7 @@ async function detailed(req, res) {
 
     server: {
       status: 'up',
-      url: `http://localhost:${env.PORT}`,
+      url: serverUrl,
       version: '3.0.0',
       node: process.version,
       env: env.NODE_ENV,
@@ -175,13 +196,21 @@ async function detailed(req, res) {
     },
 
     events: lastEvent
-      ? { last: lastEvent.class, timestamp: lastEvent.timestamp, message: lastEvent.message }
+      ? {
+          last: lastEvent.class,
+          timestamp: lastEvent.timestamp,
+          message: lastEvent.message
+        }
       : null,
 
     cors: env.CORS_ORIGINS,
 
     overall: {
-      up: [dbHealth.connected, env.REDIS_ENABLED ? redisInfo.status === 'connected' : true, env.CLOUDINARY_ENABLED].filter(Boolean).length,
+      up: [
+        dbHealth.connected,
+        env.REDIS_ENABLED ? redisInfo.status === 'connected' : true,
+        env.CLOUDINARY_ENABLED
+      ].filter(Boolean).length,
       total: 3
     },
 
