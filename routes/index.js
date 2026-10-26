@@ -37,9 +37,11 @@ function mount(app, options = {}) {
     });
   });
 
-  app.get('/health', asyncHandler(healthController.health));
-  app.get('/api/health', asyncHandler(healthController.health));
+  // ===== HEALTH (mounted BEFORE limiter — never rate-limited) =====
+  app.use('/health', require('./healthRoutes'));
+  app.use('/api/health', require('./healthRoutes'));
 
+  // ===== RATE LIMITER (applies to everything below) =====
   app.use('/api', globalLimiter);
 
   app.use('/api/auth', require('./authRoutes'));
@@ -52,6 +54,7 @@ function mount(app, options = {}) {
   app.use('/api/broadcast', require('./broadcastRoutes'));
   app.use('/api/qr', require('./qrRoutes'));
 
+  // ===== SPA fallback =====
   if (clientIndexPath) {
     app.get('*', (req, res, next) => {
       if (
