@@ -17,6 +17,9 @@ const TEXT_KEYS = [
   ['documentWithCaptionMessage', (m) => m.documentWithCaptionMessage?.message?.documentMessage?.caption]
 ];
 
+const lidCache = new Map();
+const LID_CACHE_TTL = 10 * 60 * 1000;
+
 function extractText(msg) {
   if (!msg || !msg.message) return null;
   for (const [key, getter] of TEXT_KEYS) {
@@ -38,6 +41,78 @@ function extractText(msg) {
   return null;
 }
 
+async function resolveLid(sock, lidJid) {
+  if (!lidJid || !lidJid.endsWith('@lid')) return null;
+
+  const cached = lidCache.get(lidJid);
+  if (cached && Date.now() - cached.at < LID_CACHE_TTL) {
+    return cached.value;
+  }
+
+  try {
+    const results = await sock.onWhatsApp(lidJid);
+    const phone = results?.[0]?.jid ? jid.fromJid(results[0].jid) : null;
+    if (phone) {
+      lidCache.set(lidJid, { value: phone, at: Date.now() });
+    }
+    return phone;
+  } catch (err) {
+    logger.debug({ err, lidJid }, 'lid resolve failed');
+    return null;
+  }
+}
+
+async function resolveSenderNumber(sock, msg, senderJid) {
+  if (msg?.key?.senderPn) {
+    const num = jid.fromJid(msg.key.senderPn);
+    if (num) return num;
+  }
+
+  if (senderJid && senderJid.endsWith('@s.whatsapp.net')) {
+    const num = jid.fromJid(senderJid);
+    if (num) return num;
+  }
+
+  if (senderJid && senderJid.endsWith('@lid')) {
+    const num = await resolveLid(sock, senderJid);
+    if (num) return num;
+  }
+
+  return jid.fromJid(senderJid);
+}
+
+async function resolvePermissions(sessionId, sock, chatJid, senderJid, msg) {
+  const isGroup = jid.isGroupJid(chatJid);
+  const senderNum = await resolveSenderNumber(sock, msg, senderJid);
+
+  const ownerNum = env.OWNER_NUMBER;
+  const botOwnerNum = env.BOT_OWNER_NUMBER || '';
+  const isOwner = !!senderNum && (senderNum === ownerNum || senderNum === botOwnerNum);
+
+  let isAdmin = false;
+  let isBotAdmin = false;
+
+  if (isGroup) {
+    const meta = await state.getGroupMeta(sock, chatJid);
+    if (meta && Array.isArray(meta.participants)) {
+      const admins = meta.participants.filter((p) => p.admin).map((p) => p.id);
+      const candidates = [senderJid, msg?.key?.senderPn].filter(Boolean);
+      isAdmin = admins.some((a) =>
+        candidates.some((c) => jid.sameUser(a, c) || jid.fromJid(a) === senderNum)
+      );
+      const botNum = jid.fromJid(sock.user?.id || '');
+      isBotAdmin = admins.some((a) => jid.fromJid(a) === botNum);
+    }
+  }
+
+  logger.debug(
+    { sessionId, senderJid, senderNum, isOwner, isGroup, isAdmin, isBotAdmin },
+    'permissions resolved'
+  );
+
+  return { isGroup, isOwner, isAdmin, isBotAdmin, senderNum, senderJid };
+}
+
 async function parseCommand(text, sessionId) {
   if (!text) return null;
   const prefix = await settings.getPrefix(sessionId);
@@ -52,34 +127,6 @@ async function parseCommand(text, sessionId) {
   return { name: canonical, args, prefixUsed: prefix };
 }
 
-async function resolvePermissions(sessionId, sock, chatJid, senderJid) {
-  const isGroup = jid.isGroupJid(chatJid);
-  const senderNum = jid.fromJid(senderJid);
-  const ownerNum = env.OWNER_NUMBER;
-  const botOwnerNum = env.BOT_OWNER_NUMBER || '';
-  const isOwner = !!senderNum && (senderNum === ownerNum || senderNum === botOwnerNum);
-
-  let isAdmin = false;
-  let isBotAdmin = false;
-
-  if (isGroup) {
-    try {
-      const meta = await state.getGroupMeta(sock, chatJid);
-      if (meta) {
-        const admins = (meta.participants || []).filter((p) => p.admin);
-        const adminJids = admins.map((p) => p.id);
-        isAdmin = adminJids.some((a) => jid.sameUser(a, senderJid));
-        const botNum = jid.fromJid(sock.user?.id || '');
-        isBotAdmin = adminJids.some((a) => jid.fromJid(a) === botNum);
-      }
-    } catch (err) {
-      logger.warn({ err, chatJid }, 'group metadata fetch failed');
-    }
-  }
-
-  return { isGroup, isOwner, isAdmin, isBotAdmin, senderNum };
-}
-
 function buildContext(sessionId, sock, msg, command, parsed, permissions) {
   const chatJid = msg.key.remoteJid;
   const senderJid = msg.key.participant || msg.key.remoteJid;
@@ -89,7 +136,9 @@ function buildContext(sessionId, sock, msg, command, parsed, permissions) {
   };
 
   const react = (emoji) => {
-    return sock.sendMessage(chatJid, { react: { text: emoji, key: msg.key } }).catch(() => {});
+    return sock
+      .sendMessage(chatJid, { react: { text: emoji, key: msg.key } })
+      .catch(() => {});
   };
 
   return {
@@ -97,7 +146,8 @@ function buildContext(sessionId, sock, msg, command, parsed, permissions) {
     sock,
     msg,
     chatJid,
-    senderJid,
+    senderJid: permissions.senderJid,
+    senderNum: permissions.senderNum,
     isGroup: permissions.isGroup,
     isAdmin: permissions.isAdmin,
     isBotAdmin: permissions.isBotAdmin,
@@ -125,7 +175,7 @@ async function dispatch(sessionId, sock, msg) {
 
     const chatJid = msg.key.remoteJid;
     const senderJid = msg.key.participant || msg.key.remoteJid;
-    const permissions = await resolvePermissions(sessionId, sock, chatJid, senderJid);
+    const permissions = await resolvePermissions(sessionId, sock, chatJid, senderJid, msg);
 
     if (command.ownerOnly && !permissions.isOwner) {
       await sock.sendMessage(chatJid, { text: '🔒 Owner only' }, { quoted: msg });
