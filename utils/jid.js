@@ -1,3 +1,5 @@
+const logger = require('./logger');
+
 const USER_SUFFIX = '@s.whatsapp.net';
 const GROUP_SUFFIX = '@g.us';
 const STATUS_JID = 'status@broadcast';
@@ -21,10 +23,25 @@ function toJid(number) {
 
 function fromJid(jid) {
   if (!jid || typeof jid !== 'string') return null;
-  const localPart = jid.split('@')[0] || '';
-  const deviceStripped = localPart.split(':')[0] || '';
+
+  const atIdx = jid.indexOf('@');
+  const localPart = atIdx >= 0 ? jid.slice(0, atIdx) : jid;
+
+  // strip device suffix (":12") and multi-device variant suffix (".0")
+  const deviceStripped = localPart.split(':')[0].split('.')[0];
+
   const digits = deviceStripped.replace(/[^\d]/g, '');
-  return digits || null;
+  const result = digits || null;
+
+  console.log('[jid.fromJid]', JSON.stringify({
+    input: jid,
+    localPart,
+    deviceStripped,
+    digits,
+    result
+  }));
+
+  return result;
 }
 
 function isUserJid(jid) {

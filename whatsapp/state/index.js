@@ -5,10 +5,14 @@ const dedup = new Map();
 const cooldowns = new Map();
 const messageCache = new Map();
 const qrExports = new Map();
+const globals = new Map();
+const pairingCodes = new Map();
 
 async function getGroupMeta(sock, groupJid) {
   const cached = groupCache.get(groupJid);
-  if (cached && Date.now() - cached.at < env.GROUP_CACHE_TTL_MS) return cached.value;
+  if (cached && Date.now() - cached.at < env.GROUP_CACHE_TTL_MS) {
+    return cached.value;
+  }
   try {
     const meta = await sock.groupMetadata(groupJid);
     groupCache.set(groupJid, { value: meta, at: Date.now() });
@@ -89,6 +93,28 @@ function getQRExport() {
   return null;
 }
 
+function getGlobalSetting(key, def = null) {
+  return globals.has(key) ? globals.get(key) : def;
+}
+
+function setGlobalSetting(key, value) {
+  globals.set(key, value);
+}
+
+function setPairingCode(code, data) {
+  pairingCodes.set(code, { ...data, expiresAt: Date.now() + 5 * 60 * 1000 });
+}
+
+function getPairingCode(code) {
+  const entry = pairingCodes.get(code);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    pairingCodes.delete(code);
+    return null;
+  }
+  return entry;
+}
+
 function clearSession(sessionId) {
   dedup.delete(sessionId);
   messageCache.forEach((_, key) => {
@@ -112,5 +138,9 @@ module.exports = {
   clearChat,
   setQRExport,
   getQRExport,
+  getGlobalSetting,
+  setGlobalSetting,
+  setPairingCode,
+  getPairingCode,
   clearSession
 };
