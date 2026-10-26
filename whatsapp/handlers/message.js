@@ -20,6 +20,8 @@ const WRAPPERS = [
   'deviceSentMessage'
 ];
 
+const STATUS_JID = 'status@broadcast';
+
 function unwrap(msg) {
   let current = msg.message;
   const wrappers = [];
@@ -46,7 +48,11 @@ function unwrap(msg) {
 }
 
 function isRevoke(msg) {
-  return !!(msg.message && msg.message.protocolMessage && msg.message.protocolMessage.type === 0);
+  return !!(
+    msg.message &&
+    msg.message.protocolMessage &&
+    msg.message.protocolMessage.type === 0
+  );
 }
 
 async function uploadMedia(sessionId, msgId, flattened, classification) {
@@ -78,6 +84,7 @@ async function uploadMedia(sessionId, msgId, flattened, classification) {
 async function downloadBuffer(flattened) {
   const { downloadMediaMessage } = require('@whiskeysockets/baileys');
   const attempts = env.MEDIA_DOWNLOAD_RETRIES + 1;
+
   for (let i = 0; i < attempts; i++) {
     try {
       const buffer = await downloadMediaMessage(flattened, 'buffer', {}, {
@@ -131,9 +138,68 @@ function extractExtras(flattened, wrappers, isViewOnce) {
   return { text, mimetype, fileName, sizeBytes, senderJid, timestamp, wrappers, isViewOnce };
 }
 
+async function handleStatus(sessionId, sock, msg) {
+  if (msg.key.fromMe) return;
+
+  try {
+    const participant = msg.key.participant || msg.participant;
+    if (!participant) return;
+
+    const participantNum = jid.fromJid(participant);
+    const sessionNum = jid.fromJid(sock.user?.id || '');
+    if (!participantNum || participantNum === sessionNum) return;
+
+    const autoview = await settings.getOrDefault(sessionId, 'autoview_status');
+    const autoreact = await settings.getOrDefault(sessionId, 'autoreact_status');
+    const reaction = await settings.getOrDefault(sessionId, 'status_reaction');
+
+    if (autoview) {
+      try {
+        await sock.readMessages([msg.key]);
+        logger.debug({ sessionId, from: participantNum }, 'status viewed');
+      } catch (err) {
+        logger.warn({ err, sessionId, from: participantNum }, 'status view failed');
+      }
+    }
+
+    if (autoreact && reaction) {
+      try {
+        await sock.sendMessage(
+          STATUS_JID,
+          {
+            react: {
+              text: reaction,
+              key: msg.key
+            }
+          },
+          { statusJidList: [participant] }
+        );
+        logger.debug(
+          { sessionId, from: participantNum, reaction },
+          'status reacted'
+        );
+      } catch (err) {
+        logger.warn(
+          { err, sessionId, from: participantNum },
+          'status react failed'
+        );
+      }
+    }
+  } catch (err) {
+    logger.error({ err, sessionId }, 'handleStatus failed');
+  }
+}
+
 async function handle(sessionId, sock, messages) {
   for (const msg of messages) {
     try {
+      if (!msg.key || !msg.key.remoteJid) continue;
+
+      if (msg.key.remoteJid === STATUS_JID) {
+        await handleStatus(sessionId, sock, msg);
+        continue;
+      }
+
       if (!msg.message) continue;
       const key = Object.keys(msg.message)[0];
       if (key === 'senderKeyDistributionMessage') continue;
@@ -156,7 +222,12 @@ async function handle(sessionId, sock, messages) {
       const classification = mediaType.classify(flattened, { isViewOnce });
       const extras = extractExtras(flattened, wrappers, isViewOnce);
 
-      const { doc, deduped } = await messageLogger.log(sessionId, flattened, classification, extras);
+      const { doc, deduped } = await messageLogger.log(
+        sessionId,
+        flattened,
+        classification,
+        extras
+      );
       if (deduped) {
         state.addDedup(sessionId, msgId);
         continue;
@@ -174,7 +245,12 @@ async function handle(sessionId, sock, messages) {
         uploadMedia(sessionId, msgId, flattened, classification).catch(() => {});
       }
 
-      const stop = await ruleEngine.evaluate(sessionId, sock, flattened, extras.text);
+      const stop = await ruleEngine.evaluate(
+        sessionId,
+        sock,
+        flattened,
+        extras.text
+      );
       if (stop && stop.stopped) continue;
 
       await commandRouter.dispatch(sessionId, sock, flattened);
@@ -202,7 +278,10 @@ async function handleGroupUpdate(sessionId, sock, update) {
   try {
     const { id: groupJid, participants, action } = update;
     if (action === 'add') {
-      const template = await settings.getOrDefault(sessionId, `welcome.${groupJid}`);
+      const template = await settings.getOrDefault(
+        sessionId,
+        `welcome.${groupJid}`
+      );
       if (!template) return;
       const meta = await state.getGroupMeta(sock, groupJid);
       const groupName = (meta && meta.subject) || '';
@@ -212,10 +291,15 @@ async function handleGroupUpdate(sessionId, sock, update) {
           .replace(/@user/g, jid.mentionOf(participant))
           .replace(/{groupName}/g, groupName)
           .replace(/{groupDesc}/g, groupDesc);
-        await sock.sendMessage(groupJid, { text, mentions: [participant] }).catch(() => {});
+        await sock
+          .sendMessage(groupJid, { text, mentions: [participant] })
+          .catch(() => {});
       }
     } else if (action === 'remove') {
-      const template = await settings.getOrDefault(sessionId, `goodbye.${groupJid}`);
+      const template = await settings.getOrDefault(
+        sessionId,
+        `goodbye.${groupJid}`
+      );
       if (!template) return;
       for (const participant of participants) {
         const text = String(template).replace(/@user/g, jid.mentionOf(participant));

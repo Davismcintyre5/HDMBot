@@ -1,14 +1,38 @@
 const env = require('../../config/env');
 const commandRegistry = require('../../core/commandRegistry');
 
-const CATEGORY_ORDER = ['general', 'admin', 'group', 'media', 'ai', 'utility', 'fun', 'bug', 'settings'];
+const CATEGORY_ORDER = [
+  'general',
+  'admin',
+  'group',
+  'media',
+  'ai',
+  'utility',
+  'fun',
+  'bug',
+  'settings'
+];
+
+const CATEGORY_EMOJI = {
+  general: '📋',
+  admin: '👑',
+  group: '👥',
+  media: '🎨',
+  ai: '🤖',
+  utility: '🔧',
+  fun: '🎮',
+  bug: '🐛',
+  settings: '⚙️'
+};
 
 async function build(sessionId, prefix) {
   const commands = await commandRegistry.list({ sessionId });
+
   const grouped = {};
   for (const cmd of commands) {
-    if (!grouped[cmd.category]) grouped[cmd.category] = [];
-    grouped[cmd.category].push(cmd);
+    const cat = cmd.category || 'general';
+    if (!grouped[cat]) grouped[cat] = [];
+    grouped[cat].push(cmd);
   }
 
   const categories = Object.keys(grouped).sort((a, b) => {
@@ -18,28 +42,34 @@ async function build(sessionId, prefix) {
   });
 
   const lines = [];
-  lines.push(`🤖 *${env.BOT_NAME}*`);
-  lines.push(`👑 Owner: ${env.OWNER_NAME}`);
-  lines.push(`🔖 Prefix: \`${prefix}\``);
-  lines.push(`📋 Total: ${commands.length} commands`);
+  lines.push('╔══════════════════════════════════════╗');
+  lines.push(`║  🤖 *${env.BOT_NAME}*`);
+  lines.push(`║  👑 ${env.OWNER_NAME}`);
+  lines.push(`║  📌 Prefix: \`${prefix}\``);
+  lines.push(`║  📊 Commands: ${commands.length}`);
+  lines.push('╚══════════════════════════════════════╝');
   lines.push('');
 
   for (const cat of categories) {
-    lines.push(`*─── ${cat.toUpperCase()} ───*`);
+    const emoji = CATEGORY_EMOJI[cat] || '📁';
+    lines.push(`*${emoji} ${cat.toUpperCase()}* (${grouped[cat].length})`);
     for (const cmd of grouped[cat]) {
       const usage = cmd.usage ? ` ${cmd.usage}` : '';
-      lines.push(`• \`${prefix}${cmd.name}${usage}\` — ${cmd.desc || ''}`);
+      lines.push(`  • \`${prefix}${cmd.name}${usage}\` — ${cmd.desc || ''}`);
     }
     lines.push('');
   }
 
-  return lines.join('\n').trim();
+  lines.push(`✨ *Powered by ${env.OWNER_NAME}*`);
+  return lines.join('\n');
 }
 
 async function buildCategory(sessionId, prefix, category) {
   const commands = await commandRegistry.list({ sessionId, category });
   if (commands.length === 0) return null;
-  const lines = [`*─── ${category.toUpperCase()} ───*`];
+
+  const emoji = CATEGORY_EMOJI[category] || '📁';
+  const lines = [`*${emoji} ${category.toUpperCase()}*`];
   for (const cmd of commands) {
     const usage = cmd.usage ? ` ${cmd.usage}` : '';
     lines.push(`• \`${prefix}${cmd.name}${usage}\` — ${cmd.desc || ''}`);
@@ -51,6 +81,7 @@ async function buildCommand(sessionId, prefix, name) {
   const cmd = await commandRegistry.get(name);
   if (!cmd) return null;
   if (!cmd.enabled) return null;
+
   const lines = [
     `*${cmd.name}*`,
     cmd.desc || '(no description)',

@@ -1,54 +1,90 @@
+const fs = require('fs');
+const path = require('path');
 const logger = require('../../utils/logger');
 
-const CATEGORIES = [
-  'general',
-  'admin',
-  'group',
-  'media',
-  'ai',
-  'utility',
-  'fun',
-  'bug',
-  'settings'
-];
-
+const COMMANDS_DIR = __dirname;
 const registry = new Map();
 const aliasMap = new Map();
-const categoryMap = new Map();
+
+function listCategoryFiles() {
+  return fs
+    .readdirSync(COMMANDS_DIR)
+    .filter((f) => f.endsWith('.js') && f !== 'index.js')
+    .map((f) => f.replace(/\.js$/, ''));
+}
 
 function loadCategory(name) {
+  let mod;
   try {
-    const mod = require(`./${name}`);
-    const commands = Array.isArray(mod) ? mod : [];
-    for (const cmd of commands) {
-      if (!cmd.name) {
-        logger.warn({ category: name }, 'command missing name');
-        continue;
-      }
-      const key = cmd.name.toLowerCase();
-      if (registry.has(key)) {
-        logger.warn({ name: key }, 'duplicate command name');
-        continue;
-      }
-      registry.set(key, { ...cmd, category: cmd.category || name });
-      categoryMap.set(key, cmd.category || name);
-      for (const alias of cmd.aliases || []) {
-        const a = String(alias).toLowerCase();
-        if (aliasMap.has(a)) continue;
-        aliasMap.set(a, key);
-      }
-    }
-    logger.debug({ category: name, count: commands.length }, 'loaded category');
+    mod = require(`./${name}`);
   } catch (err) {
     if (err.code !== 'MODULE_NOT_FOUND') {
       logger.error({ err, category: name }, 'category load failed');
     }
+    return 0;
   }
+
+  const commands = Array.isArray(mod) ? mod : [];
+  let loaded = 0;
+
+  for (const cmd of commands) {
+    if (!cmd || !cmd.name) {
+      logger.warn({ category: name }, 'command missing name');
+      continue;
+    }
+    if (typeof cmd.run !== 'function') {
+      logger.warn({ name: cmd.name, category: name }, 'command missing run()');
+      continue;
+    }
+
+    const key = String(cmd.name).toLowerCase();
+    if (registry.has(key)) {
+      logger.warn({ name: key, category: name }, 'duplicate command name');
+      continue;
+    }
+
+    registry.set(key, {
+      ...cmd,
+      name: key,
+      category: cmd.category || name,
+      aliases: Array.isArray(cmd.aliases)
+        ? cmd.aliases.map((a) => String(a).toLowerCase())
+        : []
+    });
+
+    for (const alias of cmd.aliases || []) {
+      const a = String(alias).toLowerCase();
+      if (aliasMap.has(a)) continue;
+      if (registry.has(a)) continue;
+      aliasMap.set(a, key);
+    }
+
+    loaded++;
+  }
+
+  if (loaded > 0) {
+    logger.debug({ category: name, count: loaded }, 'category loaded');
+  }
+  return loaded;
 }
 
-for (const cat of CATEGORIES) loadCategory(cat);
+const files = listCategoryFiles();
+const categoryCounts = {};
 
-logger.info({ commands: registry.size, categories: CATEGORIES.length }, 'command registry loaded');
+for (const name of files) {
+  categoryCounts[name] = loadCategory(name);
+}
+
+logger.info(
+  {
+    commands: registry.size,
+    aliases: aliasMap.size,
+    categories: Object.entries(categoryCounts)
+      .filter(([, n]) => n > 0)
+      .map(([name]) => name)
+  },
+  'command registry loaded'
+);
 
 function all() {
   return Array.from(registry.values());
@@ -78,4 +114,15 @@ function aliases() {
   return aliasMap;
 }
 
-module.exports = { all, get, resolveAlias, byCategory, aliases };
+function categories() {
+  return Object.keys(byCategory()).sort();
+}
+
+module.exports = {
+  all,
+  get,
+  resolveAlias,
+  byCategory,
+  aliases,
+  categories
+};

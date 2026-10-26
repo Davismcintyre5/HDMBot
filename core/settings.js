@@ -1,11 +1,13 @@
 const env = require('../config/env');
-const logger = require('../utils/logger');
-const ApiError = require('../utils/apiError');
+const { badRequest } = require('../utils/apiError');
 const Setting = require('../models/Setting');
 
 const VALIDATORS = {
   'prefix': (v) => typeof v === 'string' && /^[!-/:-@\[-`{-~]$/.test(v),
   'anti_delete': (v) => typeof v === 'boolean',
+  'autoview_status': (v) => typeof v === 'boolean',
+  'autoreact_status': (v) => typeof v === 'boolean',
+  'status_reaction': (v) => typeof v === 'string' && ['💚', '😂', '👍'].includes(v),
   'welcome.': (v) => typeof v === 'string',
   'goodbye.': (v) => typeof v === 'string',
   'muted.': (v) => typeof v === 'boolean',
@@ -16,6 +18,9 @@ const VALIDATORS = {
 const DEFAULTS = {
   'prefix': env.DEFAULT_PREFIX,
   'anti_delete': true,
+  'autoview_status': false,
+  'autoreact_status': false,
+  'status_reaction': '💚',
   'disabled_commands': [],
   'broadcast_delay_ms': 3000
 };
@@ -52,8 +57,8 @@ async function getOrDefault(sessionId, key) {
 
 async function set(sessionId, key, value, updatedBy = null) {
   const validator = lookupValidator(key);
-  if (!validator) throw ApiError.badRequest(`Unknown setting key: ${key}`);
-  if (!validator(value)) throw ApiError.badRequest(`Invalid value for ${key}`);
+  if (!validator) throw badRequest(`Unknown setting key: ${key}`);
+  if (!validator(value)) throw badRequest(`Invalid value for ${key}`);
 
   await Setting.findOneAndUpdate(
     { sessionId, key },
@@ -86,8 +91,9 @@ async function getPrefix(sessionId) {
 }
 
 function invalidate(sessionId, key) {
-  if (key) cache.delete(cacheKey(sessionId, key));
-  else {
+  if (key) {
+    cache.delete(cacheKey(sessionId, key));
+  } else {
     for (const k of cache.keys()) {
       if (k.startsWith(`${sessionId}::`)) cache.delete(k);
     }
