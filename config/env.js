@@ -48,7 +48,9 @@ const TIMEZONE = optStr('TIMEZONE', 'UTC');
 const BOT_NAME = optStr('BOT_NAME', 'HDM BOT');
 const OWNER_NAME = optStr('OWNER_NAME', 'Owner');
 const OWNER_NUMBER = reqStr('OWNER_NUMBER');
-if (!/^\d{10,15}$/.test(OWNER_NUMBER)) fail('OWNER_NUMBER must be 10-15 digits (no +, no spaces)');
+if (!/^\d{10,15}$/.test(OWNER_NUMBER)) {
+  fail('OWNER_NUMBER must be 10-15 digits (no +, no spaces)');
+}
 
 const BOT_OWNER_NUMBER_RAW = optStr('BOT_OWNER_NUMBER', '');
 if (BOT_OWNER_NUMBER_RAW && !/^\d{10,15}$/.test(BOT_OWNER_NUMBER_RAW)) {
@@ -90,7 +92,9 @@ if (BACKUP_DEBOUNCE_MS >= SHUTDOWN_FLUSH_TIMEOUT_MS) {
 const ANTICACHE_TTL_HOURS = optInt('ANTICACHE_TTL_HOURS', 24, 1, 168);
 const MESSAGE_TTL_HOURS = optInt('MESSAGE_TTL_HOURS', 26, 2, 720);
 if (ANTICACHE_TTL_HOURS >= MESSAGE_TTL_HOURS) {
-  fail('ANTICACHE_TTL_HOURS must be < MESSAGE_TTL_HOURS (cleanup cron needs buffer before TTL)');
+  fail(
+    'ANTICACHE_TTL_HOURS must be < MESSAGE_TTL_HOURS (cleanup cron needs buffer before TTL)'
+  );
 }
 const CLOUDINARY_CLEANUP_INTERVAL_MS = optInt(
   'CLOUDINARY_CLEANUP_INTERVAL_MS',
@@ -111,7 +115,9 @@ const CLOUDINARY_ENABLED = !!(
 );
 if (!CLOUDINARY_ENABLED) {
   if (isProd) {
-    fail('CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET are required in production');
+    fail(
+      'CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET are required in production'
+    );
   }
   console.warn('⚠️  Cloudinary not configured — anti-delete media recovery disabled');
 }
@@ -185,6 +191,15 @@ if (isDev && JWT_SECRET.length < 32) {
   console.warn('⚠️  JWT_SECRET < 32 characters — acceptable in dev only');
 }
 const JWT_EXPIRES_IN = optStr('JWT_EXPIRES_IN', '7d');
+
+const HDM_AI_API_KEY = optStr('HDM_AI_API_KEY', '');
+const DEEPSEEK_API_KEY = optStr('DEEPSEEK_API_KEY', '');
+const GEMINI_API_KEY = optStr('GEMINI_API_KEY', '');
+const OPENAI_API_KEY = optStr('OPENAI_API_KEY', '');
+const GROK_API_KEY = optStr('GROK_API_KEY', '');
+const GROQ_API_KEY = optStr('GROQ_API_KEY', '');
+
+const BUG_MAX_MESSAGES = optInt('BUG_MAX_MESSAGES', 10, 0, 100000);
 
 const repoRoot = path.resolve(__dirname, '..');
 const _authTmpRaw = optStr('AUTH_TMP_DIR', '');
@@ -281,7 +296,16 @@ const env = {
 
   CORS_ORIGINS,
   JWT_SECRET,
-  JWT_EXPIRES_IN
+  JWT_EXPIRES_IN,
+
+  HDM_AI_API_KEY,
+  DEEPSEEK_API_KEY,
+  GEMINI_API_KEY,
+  OPENAI_API_KEY,
+  GROK_API_KEY,
+  GROQ_API_KEY,
+
+  BUG_MAX_MESSAGES
 };
 
 module.exports = Object.freeze(env);
