@@ -7,6 +7,34 @@ const asyncHandler = require('../utils/asyncHandler');
 const healthController = require('../controllers/healthController');
 const env = require('../config/env');
 
+const PROBE_PREFIXES = [
+  '/wp-', '/wp/', '/wordpress', '/phpmyadmin', '/pma', '/adminer',
+  '/cpanel', '/webmail', '/phpinfo', '/info.php', '/xmlrpc',
+  '/.env', '/.git', '/.svn', '/.hg', '/.aws', '/.ssh'
+];
+
+const PROBE_PATTERNS = [
+  /\.(env|git|svn|hg|php|asp|aspx|jsp|config|conf|yml|yaml|xml|bak|old|save|swp|log|sql|db|sqlite|map|pem|key|crt)$/i,
+  /\/\.(env|git|svn|hg|aws|ssh)/i,
+  /(^|\/)\.(env|git|svn|hg|aws|ssh)/i,
+  /\.git\//i,
+  /\.svn\//i
+];
+
+function isProbe(reqPath) {
+  if (!reqPath) return false;
+
+  if (PROBE_PREFIXES.some((p) => reqPath.startsWith(p))) return true;
+
+  if (PROBE_PATTERNS.some((re) => re.test(reqPath))) return true;
+
+  const lastSegment = reqPath.split('/').pop() || '';
+  if (lastSegment.startsWith('.')) return true;
+  if (lastSegment.includes('..')) return true;
+
+  return false;
+}
+
 function mount(app, options = {}) {
   const { clientIndexPath } = options;
 
@@ -37,11 +65,9 @@ function mount(app, options = {}) {
     });
   });
 
-  // ===== HEALTH (mounted BEFORE limiter — never rate-limited) =====
   app.use('/health', require('./healthRoutes'));
   app.use('/api/health', require('./healthRoutes'));
 
-  // ===== RATE LIMITER (applies to everything below) =====
   app.use('/api', globalLimiter);
 
   app.use('/api/auth', require('./authRoutes'));
@@ -54,17 +80,27 @@ function mount(app, options = {}) {
   app.use('/api/broadcast', require('./broadcastRoutes'));
   app.use('/api/qr', require('./qrRoutes'));
 
-  // ===== SPA fallback =====
   if (clientIndexPath) {
     app.get('*', (req, res, next) => {
+      const p = req.path;
+
       if (
-        req.path.startsWith('/api') ||
-        req.path.startsWith('/health') ||
-        req.path.startsWith('/socket.io')
+        p.startsWith('/api') ||
+        p.startsWith('/health') ||
+        p.startsWith('/socket.io')
       ) {
         return next();
       }
-      res.sendFile(clientIndexPath);
+
+      if (isProbe(p)) {
+        return res.status(404).type('txt').send('Not Found');
+      }
+
+      if (p === '/' || !p.includes('.')) {
+        return res.sendFile(clientIndexPath);
+      }
+
+      return res.status(404).type('txt').send('Not Found');
     });
   }
 

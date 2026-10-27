@@ -25,7 +25,13 @@ const clientIndexPath = path.join(clientDistDir, 'index.html');
 const hasClientBuild = fs.existsSync(clientIndexPath);
 
 if (hasClientBuild) {
-  app.use(express.static(clientDistDir, { index: false }));
+  app.use(
+    express.static(clientDistDir, {
+      index: false,
+      dotfiles: 'deny',
+      redirect: false
+    })
+  );
 }
 
 require('./routes').mount(app, {
@@ -42,6 +48,32 @@ const httpServer = http.createServer(app);
 socket.createSocketServer(httpServer);
 
 let shuttingDown = false;
+
+function isTransientRejection(reason) {
+  if (!reason) return false;
+  if (reason.isBoom === true) return true;
+
+  const code =
+    reason.output?.statusCode ||
+    reason.data?.output?.statusCode ||
+    reason.statusCode;
+
+  if ([408, 428, 503, 515, 502, 504].includes(code)) return true;
+
+  const msg = String(reason.message || reason.reason || '').toLowerCase();
+  if (
+    msg.includes('connection closed') ||
+    msg.includes('connection lost') ||
+    msg.includes('socket') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout') ||
+    msg.includes('stream errored')
+  ) {
+    return true;
+  }
+
+  return false;
+}
 
 function printBanner() {
   let sessionCount = 0;
@@ -189,12 +221,26 @@ process.on('SIGHUP', () => shutdown('SIGHUP'));
 
 process.on('uncaughtException', (err) => {
   logger.error({ err }, 'uncaughtException');
-  if (env.isProd) process.exit(1);
+  if (env.isProd && !isTransientRejection(err)) {
+    process.exit(1);
+  }
 });
 
 process.on('unhandledRejection', (reason) => {
-  logger.error({ reason }, 'unhandledRejection');
-  if (env.isProd) process.exit(1);
+  const transient = isTransientRejection(reason);
+
+  logger.error(
+    {
+      reason,
+      transient,
+      code: reason?.output?.statusCode || reason?.statusCode || null
+    },
+    'unhandledRejection'
+  );
+
+  if (env.isProd && !transient) {
+    process.exit(1);
+  }
 });
 
 bootstrap().catch((err) => {
