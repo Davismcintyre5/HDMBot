@@ -138,11 +138,13 @@ async function handle(sessionId, sock, revokeInfo) {
     }
 
     if (!recovered) {
+      const typeLabel = doc.type || 'unknown';
       const fallback =
         `🔍 *DELETED MESSAGE*\n\n` +
         `💬 *Chat:* ${chatDisplay(doc)}\n` +
         `📤 *From:* @${senderDisplay(doc)}\n` +
-        `📝 *Content:* [${doc.type} — could not recover]\n\n` +
+        `📝 *Content:* [${typeLabel} — not recoverable]\n` +
+        `🕒 *Sent:* ${new Date(doc.timestamp).toLocaleString()}\n\n` +
         `_Forwarded by HDM BOT_`;
 
       await Promise.all(
@@ -150,7 +152,7 @@ async function handle(sessionId, sock, revokeInfo) {
           sock.sendMessage(t, { text: fallback, mentions: [doc.senderJid] }).catch(() => {})
         )
       );
-      logger.debug({ sessionId, msgId }, 'anti-delete: no content recovered');
+      logger.debug({ sessionId, msgId, type: doc.type }, 'anti-delete: no content recovered');
     }
   } catch (err) {
     logger.error({ err, sessionId }, 'anti-delete handle failed');

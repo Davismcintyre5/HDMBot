@@ -10,16 +10,37 @@ const env = require('../config/env');
 const PROBE_PREFIXES = [
   '/wp-', '/wp/', '/wordpress', '/phpmyadmin', '/pma', '/adminer',
   '/cpanel', '/webmail', '/phpinfo', '/info.php', '/xmlrpc',
-  '/.env', '/.git', '/.svn', '/.hg', '/.aws', '/.ssh'
+  '/.env', '/.git', '/.svn', '/.hg', '/.aws', '/.ssh', '/.docker',
+  '/.kube', '/.terraform', '/.lfs', '/.hgrc', '/.dockercfg',
+  '/_next', '/_nuxt', '/_astro', '/_app'
 ];
 
 const PROBE_PATTERNS = [
-  /\.(env|git|svn|hg|php|asp|aspx|jsp|config|conf|yml|yaml|xml|bak|old|save|swp|log|sql|db|sqlite|map|pem|key|crt)$/i,
-  /\/\.(env|git|svn|hg|aws|ssh)/i,
-  /(^|\/)\.(env|git|svn|hg|aws|ssh)/i,
+  /\.(env|git|svn|hg|php|asp|aspx|jsp|config|conf|yml|yaml|xml|bak|old|save|swp|log|sql|db|sqlite|map|pem|key|crt|tfstate|tfvars)$/i,
+  /\/\.(env|git|svn|hg|aws|ssh|docker|kube|terraform|lfs)/i,
+  /(^|\/)\.(env|git|svn|hg|aws|ssh|docker|kube|terraform|lfs)/i,
   /\.git\//i,
-  /\.svn\//i
+  /\.svn\//i,
+  /\.hg\//i,
+  /\.terraform\//i,
+  /kubeconfig/i,
+  /docker-compose/i,
+  /terraform\.tfstate/i
 ];
+
+const SPA_ROUTES = new Set([
+  '/',
+  '/login',
+  '/qr',
+  '/devices',
+  '/rules',
+  '/commands',
+  '/broadcast',
+  '/contacts',
+  '/settings',
+  '/health',
+  '/not-found'
+]);
 
 function isProbe(reqPath) {
   if (!reqPath) return false;
@@ -31,6 +52,9 @@ function isProbe(reqPath) {
   const lastSegment = reqPath.split('/').pop() || '';
   if (lastSegment.startsWith('.')) return true;
   if (lastSegment.includes('..')) return true;
+
+  if (reqPath === '/v2/' || reqPath === '/v1/' || reqPath === '/v3/') return true;
+  if (reqPath.startsWith('/-/')) return true;
 
   return false;
 }
@@ -96,7 +120,7 @@ function mount(app, options = {}) {
         return res.status(404).type('txt').send('Not Found');
       }
 
-      if (p === '/' || !p.includes('.')) {
+      if (SPA_ROUTES.has(p)) {
         return res.sendFile(clientIndexPath);
       }
 

@@ -31,7 +31,8 @@ const LOG_STRINGS = [
   'Decrypted message with closed',
   'Closing open session',
   'prekey bundle',
-  'Backed up to MongoDB'
+  'Backed up to MongoDB',
+  'Closing open session in favor of incoming prekey bundle'
 ];
 
 const ERROR_STRINGS = [
@@ -40,6 +41,14 @@ const ERROR_STRINGS = [
   'Session error',
   'Failed to decrypt'
 ];
+
+const MULTILINE_TRIGGERS = [
+  'Closing session:',
+  'Closing open session',
+  'SessionEntry'
+];
+
+let suppressCount = 0;
 
 process.removeAllListeners('warning');
 process.on('warning', (warning) => {
@@ -51,6 +60,11 @@ process.on('warning', (warning) => {
 
 const originalLog = console.log;
 console.log = function (...args) {
+  if (suppressCount > 0) {
+    suppressCount--;
+    return;
+  }
+
   for (const arg of args) {
     if (typeof arg === 'object' && arg !== null) {
       let str;
@@ -59,17 +73,32 @@ console.log = function (...args) {
       } catch {
         str = '';
       }
-      if (OBJECT_PATTERNS.some((p) => str.includes(p))) return;
+      if (OBJECT_PATTERNS.some((p) => str.includes(p))) {
+        suppressCount = 60;
+        return;
+      }
     }
+
     if (typeof arg === 'string') {
-      if (LOG_STRINGS.some((p) => arg.includes(p))) return;
+      if (LOG_STRINGS.some((p) => arg.includes(p))) {
+        if (MULTILINE_TRIGGERS.some((p) => arg.includes(p))) {
+          suppressCount = 60;
+        }
+        return;
+      }
     }
   }
+
   originalLog.apply(console, args);
 };
 
 const originalError = console.error;
 console.error = function (...args) {
+  if (suppressCount > 0) {
+    suppressCount--;
+    return;
+  }
+
   const msg = args
     .map((a) => {
       if (typeof a === 'object' && a !== null) {
@@ -82,7 +111,11 @@ console.error = function (...args) {
       return String(a);
     })
     .join(' ');
-  if (ERROR_STRINGS.some((p) => msg.includes(p))) return;
+
+  if (ERROR_STRINGS.some((p) => msg.includes(p))) {
+    return;
+  }
+
   originalError.apply(console, args);
 };
 

@@ -107,9 +107,11 @@ function extractExtras(flattened, wrappers, isViewOnce) {
   let fileName = null;
   let sizeBytes = null;
 
-  if (m.conversation) text = m.conversation;
-  else if (m.extendedTextMessage) text = m.extendedTextMessage.text || null;
-  else if (m.imageMessage) {
+  if (m.conversation) {
+    text = m.conversation;
+  } else if (m.extendedTextMessage) {
+    text = m.extendedTextMessage.text || null;
+  } else if (m.imageMessage) {
     text = m.imageMessage.caption || null;
     mimetype = m.imageMessage.mimetype;
     sizeBytes = m.imageMessage.fileLength ? Number(m.imageMessage.fileLength) : null;
@@ -127,6 +129,37 @@ function extractExtras(flattened, wrappers, isViewOnce) {
     sizeBytes = m.audioMessage.fileLength ? Number(m.audioMessage.fileLength) : null;
   } else if (m.stickerMessage) {
     mimetype = m.stickerMessage.mimetype;
+  } else if (m.buttonsResponseMessage) {
+    text = m.buttonsResponseMessage.selectedButtonId || m.buttonsResponseMessage.selectedDisplayText || null;
+  } else if (m.templateButtonReplyMessage) {
+    text = m.templateButtonReplyMessage.selectedId || m.templateButtonReplyMessage.selectedDisplayText || null;
+  } else if (m.listResponseMessage) {
+    text = m.listResponseMessage.singleSelectReply?.selectedRowId || m.listResponseMessage.title || null;
+  } else if (m.reactionMessage) {
+    text = `[reaction: ${m.reactionMessage.text || ''}]`;
+  } else if (m.pollCreationMessage) {
+    text = `[poll: ${m.pollCreationMessage.name || ''}]`;
+  } else if (m.pollCreationMessageV3) {
+    text = `[poll: ${m.pollCreationMessageV3.name || ''}]`;
+  } else if (m.pollUpdateMessage) {
+    text = '[poll vote]';
+  } else if (m.locationMessage) {
+    text = `[location: ${m.locationMessage.degreesLatitude}, ${m.locationMessage.degreesLongitude}]`;
+  } else if (m.liveLocationMessage) {
+    text = '[live location]';
+  } else if (m.contactMessage) {
+    text = `[contact: ${m.contactMessage.displayName || ''}]`;
+  } else if (m.contactsArrayMessage) {
+    text = `[contacts: ${m.contactsArrayMessage.contacts?.length || 0}]`;
+  } else if (m.protocolMessage) {
+    text = '[protocol message]';
+  } else if (m.editedMessage) {
+    const inner = m.editedMessage.message || {};
+    text = inner.conversation || inner.extendedTextMessage?.text || '[edited message]';
+  } else if (m.ptvMessage) {
+    text = '[video note]';
+  } else if (m.eventMessage) {
+    text = `[event: ${m.eventMessage.name || ''}]`;
   }
 
   const senderJid = flattened.key.participant || flattened.key.remoteJid;
@@ -166,12 +199,7 @@ async function handleStatus(sessionId, sock, msg) {
       try {
         await sock.sendMessage(
           STATUS_JID,
-          {
-            react: {
-              text: reaction,
-              key: msg.key
-            }
-          },
+          { react: { text: reaction, key: msg.key } },
           { statusJidList: [participant] }
         );
         logger.debug({ sessionId, from: participantNum, reaction }, 'status reacted');
@@ -252,22 +280,14 @@ async function autoForwardViewOnce(sessionId, sock, flattened, isViewOnce) {
         } else if (type === 'videoMessage') {
           await sock.sendMessage(target, { video: buffer, caption, mentions });
         } else {
-          await sock.sendMessage(target, {
-            audio: buffer,
-            mimetype: 'audio/mp4',
-            ptt: true
-          });
+          await sock.sendMessage(target, { audio: buffer, mimetype: 'audio/mp4', ptt: true });
         }
       } catch (err) {
         logger.warn({ err, target, sessionId }, 'view-once forward: send failed');
       }
     }
 
-    logger.debug(
-      { sessionId, senderNum, type, targets },
-      'view-once auto-forwarded'
-    );
-
+    logger.debug({ sessionId, senderNum, type, targets }, 'view-once auto-forwarded');
     return true;
   } catch (err) {
     logger.warn({ err, sessionId }, 'autoForwardViewOnce failed');
@@ -311,12 +331,7 @@ async function handle(sessionId, sock, messages) {
       const classification = mediaType.classify(flattened, { isViewOnce });
       const extras = extractExtras(flattened, wrappers, isViewOnce);
 
-      const { doc, deduped } = await messageLogger.log(
-        sessionId,
-        flattened,
-        classification,
-        extras
-      );
+      const { doc, deduped } = await messageLogger.log(sessionId, flattened, classification, extras);
       if (deduped) {
         state.addDedup(sessionId, msgId);
         continue;
@@ -334,12 +349,7 @@ async function handle(sessionId, sock, messages) {
         uploadMedia(sessionId, msgId, flattened, classification).catch(() => {});
       }
 
-      const stop = await ruleEngine.evaluate(
-        sessionId,
-        sock,
-        flattened,
-        extras.text
-      );
+      const stop = await ruleEngine.evaluate(sessionId, sock, flattened, extras.text);
       if (stop && stop.stopped) continue;
 
       await commandRouter.dispatch(sessionId, sock, flattened);
@@ -377,9 +387,7 @@ async function handleGroupUpdate(sessionId, sock, update) {
           .replace(/@user/g, jid.mentionOf(participant))
           .replace(/{groupName}/g, groupName)
           .replace(/{groupDesc}/g, groupDesc);
-        await sock
-          .sendMessage(groupJid, { text, mentions: [participant] })
-          .catch(() => {});
+        await sock.sendMessage(groupJid, { text, mentions: [participant] }).catch(() => {});
       }
     } else if (action === 'remove') {
       const template = await settings.getOrDefault(sessionId, `goodbye.${groupJid}`);
