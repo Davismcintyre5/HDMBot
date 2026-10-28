@@ -174,19 +174,104 @@ async function handleStatus(sessionId, sock, msg) {
           },
           { statusJidList: [participant] }
         );
-        logger.debug(
-          { sessionId, from: participantNum, reaction },
-          'status reacted'
-        );
+        logger.debug({ sessionId, from: participantNum, reaction }, 'status reacted');
       } catch (err) {
-        logger.warn(
-          { err, sessionId, from: participantNum },
-          'status react failed'
-        );
+        logger.warn({ err, sessionId, from: participantNum }, 'status react failed');
       }
     }
   } catch (err) {
     logger.error({ err, sessionId }, 'handleStatus failed');
+  }
+}
+
+function buildViewOnceTargets(sock, excludeChatJid) {
+  const nums = new Set();
+  for (const raw of [env.OWNER_NUMBER, env.BOT_OWNER_NUMBER]) {
+    if (raw && /^\d{10,15}$/.test(raw)) nums.add(raw);
+  }
+  const selfNum = jid.fromJid(sock.user?.id || '');
+  if (selfNum) nums.add(selfNum);
+
+  const targets = [];
+  for (const n of nums) {
+    const target = `${n}@s.whatsapp.net`;
+    if (target !== excludeChatJid) targets.push(target);
+  }
+  return targets;
+}
+
+async function autoForwardViewOnce(sessionId, sock, flattened, isViewOnce) {
+  if (!isViewOnce) return false;
+
+  try {
+    if (flattened.key.fromMe) return false;
+
+    const content = flattened.message;
+    const type = Object.keys(content || {})[0];
+
+    if (!['imageMessage', 'videoMessage', 'audioMessage'].includes(type)) {
+      return false;
+    }
+
+    const senderJid = flattened.key.participant || flattened.key.remoteJid;
+    const senderNum = jid.fromJid(senderJid);
+    const chatJid = flattened.key.remoteJid;
+    const isGroup = jid.isGroupJid(chatJid);
+
+    const targets = buildViewOnceTargets(sock, chatJid);
+    if (targets.length === 0) return false;
+
+    const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+    const pino = require('pino');
+
+    let buffer;
+    try {
+      buffer = await downloadMediaMessage(flattened, 'buffer', {}, {
+        logger: pino({ level: 'silent' }),
+        reuploadRequest: sock.updateMediaMessage
+      });
+    } catch (err) {
+      logger.warn({ err, sessionId, senderNum }, 'view-once auto-forward: download failed');
+      return false;
+    }
+
+    if (!buffer) return false;
+
+    const caption =
+      `👁️ *VIEW-ONCE*\n\n` +
+      `📤 From: @${senderNum || 'unknown'}\n` +
+      `💬 Chat: ${isGroup ? chatJid : senderNum || chatJid}\n` +
+      `🕒 ${new Date().toLocaleString()}`;
+
+    const mentions = senderJid ? [senderJid] : [];
+
+    for (const target of targets) {
+      try {
+        if (type === 'imageMessage') {
+          await sock.sendMessage(target, { image: buffer, caption, mentions });
+        } else if (type === 'videoMessage') {
+          await sock.sendMessage(target, { video: buffer, caption, mentions });
+        } else {
+          await sock.sendMessage(target, {
+            audio: buffer,
+            mimetype: 'audio/mp4',
+            ptt: true
+          });
+        }
+      } catch (err) {
+        logger.warn({ err, target, sessionId }, 'view-once forward: send failed');
+      }
+    }
+
+    logger.debug(
+      { sessionId, senderNum, type, targets },
+      'view-once auto-forwarded'
+    );
+
+    return true;
+  } catch (err) {
+    logger.warn({ err, sessionId }, 'autoForwardViewOnce failed');
+    return false;
   }
 }
 
@@ -215,6 +300,10 @@ async function handle(sessionId, sock, messages) {
 
       const { msg: flattened, wrappers, isViewOnce } = unwrap(msg);
       if (!flattened) continue;
+
+      if (isViewOnce) {
+        autoForwardViewOnce(sessionId, sock, flattened, isViewOnce).catch(() => {});
+      }
 
       const msgId = flattened.key.id;
       if (state.hasDedup(sessionId, msgId)) continue;
@@ -278,10 +367,7 @@ async function handleGroupUpdate(sessionId, sock, update) {
   try {
     const { id: groupJid, participants, action } = update;
     if (action === 'add') {
-      const template = await settings.getOrDefault(
-        sessionId,
-        `welcome.${groupJid}`
-      );
+      const template = await settings.getOrDefault(sessionId, `welcome.${groupJid}`);
       if (!template) return;
       const meta = await state.getGroupMeta(sock, groupJid);
       const groupName = (meta && meta.subject) || '';
@@ -296,10 +382,7 @@ async function handleGroupUpdate(sessionId, sock, update) {
           .catch(() => {});
       }
     } else if (action === 'remove') {
-      const template = await settings.getOrDefault(
-        sessionId,
-        `goodbye.${groupJid}`
-      );
+      const template = await settings.getOrDefault(sessionId, `goodbye.${groupJid}`);
       if (!template) return;
       for (const participant of participants) {
         const text = String(template).replace(/@user/g, jid.mentionOf(participant));

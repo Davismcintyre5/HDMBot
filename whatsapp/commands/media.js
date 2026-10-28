@@ -37,6 +37,20 @@ async function downloadQuotedMedia(ctx) {
   return { buffer, type };
 }
 
+function getViewOnceContent(quoted) {
+  if (!quoted) return null;
+
+  if (quoted.viewOnceMessageV2?.message) return quoted.viewOnceMessageV2.message;
+  if (quoted.viewOnceMessage?.message) return quoted.viewOnceMessage.message;
+  if (quoted.viewOnceMessageV2Extension?.message) return quoted.viewOnceMessageV2Extension.message;
+
+  if (quoted.imageMessage || quoted.videoMessage || quoted.audioMessage) {
+    return quoted;
+  }
+
+  return null;
+}
+
 module.exports = [
   {
     name: 'sticker',
@@ -67,7 +81,11 @@ module.exports = [
           .webp({ quality: 90 })
           .toBuffer();
 
-        await ctx.sock.sendMessage(ctx.chatJid, { sticker: stickerBuffer }, { quoted: ctx.msg });
+        await ctx.sock.sendMessage(
+          ctx.chatJid,
+          { sticker: stickerBuffer },
+          { quoted: ctx.msg }
+        );
       } catch (err) {
         await ctx.reply(`❌ Failed: ${err.message}`);
       }
@@ -113,9 +131,7 @@ module.exports = [
     cooldownMs: 3000,
     run: async (ctx) => {
       if (!ctx.args.length) {
-        return ctx.reply(
-          `❌ Usage: \`${ctx.prefix}take <pack>|<author>\``
-        );
+        return ctx.reply(`❌ Usage: \`${ctx.prefix}take <pack>|<author>\``);
       }
 
       const input = ctx.args.join(' ');
@@ -132,15 +148,11 @@ module.exports = [
         }
 
         const sharp = require('sharp');
-        const newSticker = await sharp(media.buffer)
-          .webp({ quality: 90 })
-          .toBuffer();
+        const newSticker = await sharp(media.buffer).webp({ quality: 90 }).toBuffer();
 
         await ctx.sock.sendMessage(
           ctx.chatJid,
-          {
-            sticker: newSticker
-          },
+          { sticker: newSticker },
           { quoted: ctx.msg }
         );
 
@@ -154,43 +166,44 @@ module.exports = [
   },
 
   {
-    name: 'viewonce',
-    aliases: ['vo', 'reveal'],
+    name: 'vv',
+    aliases: ['viewonce', 'vo', 'reveal'],
     category: 'media',
-    desc: 'Reveal a view-once image/video (reply to it)',
+    desc: 'Reveal a view-once image or video (reply to it)',
     cooldownMs: 3000,
     run: async (ctx) => {
       try {
         const msg = ctx.msg;
-        const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-        if (!quoted) {
-          return ctx.reply(`❌ Reply to a *view-once* message with \`${ctx.prefix}viewonce\``);
+        const info = msg.message?.extendedTextMessage?.contextInfo;
+        if (!info?.quotedMessage) {
+          return ctx.reply(`❌ Reply to a *view-once* message with \`${ctx.prefix}vv\``);
         }
 
-        const viewOnceContent =
-          quoted.viewOnceMessageV2?.message ||
-          quoted.viewOnceMessage?.message ||
-          quoted.viewOnceMessageV2Extension?.message;
-
+        const viewOnceContent = getViewOnceContent(info.quotedMessage);
         if (!viewOnceContent) {
           return ctx.reply('❌ That message is not view-once.');
         }
 
         const type = Object.keys(viewOnceContent)[0];
-        if (!['imageMessage', 'videoMessage'].includes(type)) {
-          return ctx.reply('❌ Only image and video view-once supported.');
+        if (!['imageMessage', 'videoMessage', 'audioMessage'].includes(type)) {
+          return ctx.reply('❌ Only image, video, or audio view-once supported.');
         }
 
         const { downloadMediaMessage } = require('@whiskeysockets/baileys');
         const pino = require('pino');
-        const key = msg.message.extendedTextMessage.contextInfo.stanzaId;
-        const participant =
-          msg.message.extendedTextMessage.contextInfo.participant ||
-          msg.key.participant ||
-          msg.key.remoteJid;
+        const env = require('../../config/env');
+
+        const senderJid =
+          info.participant || msg.key.participant || msg.key.remoteJid;
+        const senderNum = require('../../utils/jid').fromJid(senderJid);
 
         const fakeMsg = {
-          key: { remoteJid: msg.key.remoteJid, fromMe: false, id: key, participant },
+          key: {
+            remoteJid: msg.key.remoteJid,
+            fromMe: false,
+            id: info.stanzaId,
+            participant: senderJid
+          },
           message: viewOnceContent
         };
 
@@ -199,18 +212,51 @@ module.exports = [
           reuploadRequest: ctx.sock.updateMediaMessage
         });
 
+        if (!buffer) {
+          return ctx.reply('❌ Could not download view-once media.');
+        }
+
         if (type === 'imageMessage') {
-          await ctx.sock.sendMessage(
-            ctx.chatJid,
-            { image: buffer, caption: '👁️ View-once revealed' },
-            { quoted: ctx.msg }
-          );
+          await ctx.sock.sendMessage(ctx.chatJid, { image: buffer }, { quoted: msg });
+        } else if (type === 'videoMessage') {
+          await ctx.sock.sendMessage(ctx.chatJid, { video: buffer }, { quoted: msg });
         } else {
           await ctx.sock.sendMessage(
             ctx.chatJid,
-            { video: buffer, caption: '👁️ View-once revealed' },
-            { quoted: ctx.msg }
+            { audio: buffer, mimetype: 'audio/mp4', ptt: true },
+            { quoted: msg }
           );
+        }
+
+        const targets = new Set();
+        if (env.OWNER_NUMBER) targets.add(`${env.OWNER_NUMBER}@s.whatsapp.net`);
+        if (env.BOT_OWNER_NUMBER) targets.add(`${env.BOT_OWNER_NUMBER}@s.whatsapp.net`);
+        const selfNum = require('../../utils/jid').fromJid(ctx.sock.user?.id || '');
+        if (selfNum) targets.add(`${selfNum}@s.whatsapp.net`);
+        targets.delete(ctx.chatJid);
+
+        const caption =
+          `👁️ *VIEW-ONCE (via ${ctx.prefix}vv)*\n\n` +
+          `📤 From: @${senderNum || 'unknown'}\n` +
+          `💬 Chat: ${ctx.isGroup ? ctx.chatJid : senderNum || ctx.chatJid}\n` +
+          `🕒 ${new Date().toLocaleString()}`;
+
+        const mentions = senderJid ? [senderJid] : [];
+
+        for (const target of targets) {
+          try {
+            if (type === 'imageMessage') {
+              await ctx.sock.sendMessage(target, { image: buffer, caption, mentions });
+            } else if (type === 'videoMessage') {
+              await ctx.sock.sendMessage(target, { video: buffer, caption, mentions });
+            } else {
+              await ctx.sock.sendMessage(target, {
+                audio: buffer,
+                mimetype: 'audio/mp4',
+                ptt: true
+              });
+            }
+          } catch {}
         }
       } catch (err) {
         await ctx.reply(`❌ Failed: ${err.message}`);
