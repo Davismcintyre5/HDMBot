@@ -30,8 +30,7 @@ function extractText(msg) {
   }
   if (msg.message.interactiveResponseMessage) {
     try {
-      const raw =
-        msg.message.interactiveResponseMessage.nativeFlowResponseMessage?.paramsJson;
+      const raw = msg.message.interactiveResponseMessage.nativeFlowResponseMessage?.paramsJson;
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       return parsed.id || null;
@@ -91,8 +90,7 @@ async function resolvePermissions(sessionId, sock, chatJid, senderJid, msg) {
   const ownerLid = env.OWNER_LID;
   const ownerLidJid = ownerLid ? `${ownerLid}@lid` : null;
 
-  const isOwnerByNum =
-    !!senderNum && (senderNum === ownerNum || senderNum === botOwnerNum);
+  const isOwnerByNum = !!senderNum && (senderNum === ownerNum || senderNum === botOwnerNum);
   const isOwnerByLid = !!ownerLidJid && senderJid === ownerLidJid;
   const isOwner = isOwnerByNum || isOwnerByLid;
 
@@ -134,11 +132,7 @@ function buildContext(sessionId, sock, msg, command, parsed, permissions) {
   const senderJid = msg.key.participant || msg.key.remoteJid;
 
   const reply = (text, opts = {}) => {
-    return sock.sendMessage(
-      chatJid,
-      { text: String(text), ...opts },
-      { quoted: msg }
-    );
+    return sock.sendMessage(chatJid, { text: String(text), ...opts }, { quoted: msg });
   };
 
   const react = (emoji) => {
@@ -177,22 +171,22 @@ async function dispatch(sessionId, sock, msg) {
     const command = await commandRegistry.get(parsed.name);
     if (!command) return;
     if (!command.enabled) return;
-    if (
-      command.sessionScoped &&
-      command.disabledSessions.includes(sessionId)
-    ) {
-      return;
-    }
+    if (command.sessionScoped && command.disabledSessions.includes(sessionId)) return;
 
     const chatJid = msg.key.remoteJid;
     const senderJid = msg.key.participant || msg.key.remoteJid;
-    const permissions = await resolvePermissions(
-      sessionId,
-      sock,
-      chatJid,
-      senderJid,
-      msg
-    );
+    const permissions = await resolvePermissions(sessionId, sock, chatJid, senderJid, msg);
+
+    if (!permissions.isOwner) {
+      const mode = await settings.getOrDefault(sessionId, 'mode');
+      if (mode === 'private') {
+        logger.debug(
+          { sessionId, senderJid, command: command.name },
+          'private mode: command ignored'
+        );
+        return;
+      }
+    }
 
     if (command.ownerOnly && !permissions.isOwner) {
       await sock.sendMessage(chatJid, { text: '🔒 Owner only' }, { quoted: msg });
@@ -228,16 +222,9 @@ async function dispatch(sessionId, sock, msg) {
       await command.run(ctx);
       commandRegistry.recordUsage(command.name, sessionId);
     } catch (err) {
-      logger.error(
-        { err, command: command.name, sessionId },
-        'command failed'
-      );
+      logger.error({ err, command: command.name, sessionId }, 'command failed');
       try {
-        await sock.sendMessage(
-          chatJid,
-          { text: '❌ Command failed' },
-          { quoted: msg }
-        );
+        await sock.sendMessage(chatJid, { text: '❌ Command failed' }, { quoted: msg });
       } catch {}
     }
   } catch (err) {

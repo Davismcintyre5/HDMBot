@@ -42,47 +42,41 @@ const ERROR_STRINGS = [
   'Failed to decrypt'
 ];
 
-const MULTILINE_TRIGGERS = [
+const TRIGGER_STRINGS = [
   'Closing session:',
   'Closing open session',
   'SessionEntry'
 ];
 
-let suppressCount = 0;
+let suppressUntil = 0;
 
 process.removeAllListeners('warning');
 process.on('warning', (warning) => {
-  if (warning.name === 'DeprecationWarning' && warning.message.includes('punycode')) {
-    return;
-  }
+  if (warning.name === 'DeprecationWarning' && warning.message.includes('punycode')) return;
   console.warn(warning.name, warning.message);
 });
 
 const originalLog = console.log;
 console.log = function (...args) {
-  if (suppressCount > 0) {
-    suppressCount--;
-    return;
-  }
+  if (Date.now() < suppressUntil) return;
 
   for (const arg of args) {
     if (typeof arg === 'object' && arg !== null) {
       let str;
       try {
-        str = JSON.stringify(arg).substring(0, 150);
+        str = JSON.stringify(arg).substring(0, 200);
       } catch {
         str = '';
       }
       if (OBJECT_PATTERNS.some((p) => str.includes(p))) {
-        suppressCount = 60;
+        suppressUntil = Date.now() + 800;
         return;
       }
     }
-
     if (typeof arg === 'string') {
       if (LOG_STRINGS.some((p) => arg.includes(p))) {
-        if (MULTILINE_TRIGGERS.some((p) => arg.includes(p))) {
-          suppressCount = 60;
+        if (TRIGGER_STRINGS.some((p) => arg.includes(p))) {
+          suppressUntil = Date.now() + 800;
         }
         return;
       }
@@ -94,10 +88,7 @@ console.log = function (...args) {
 
 const originalError = console.error;
 console.error = function (...args) {
-  if (suppressCount > 0) {
-    suppressCount--;
-    return;
-  }
+  if (Date.now() < suppressUntil) return;
 
   const msg = args
     .map((a) => {
@@ -113,6 +104,7 @@ console.error = function (...args) {
     .join(' ');
 
   if (ERROR_STRINGS.some((p) => msg.includes(p))) {
+    suppressUntil = Date.now() + 800;
     return;
   }
 

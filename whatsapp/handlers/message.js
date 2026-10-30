@@ -162,6 +162,11 @@ function extractExtras(flattened, wrappers, isViewOnce) {
     text = `[event: ${m.eventMessage.name || ''}]`;
   }
 
+  if (!text) {
+    const key = Object.keys(m)[0];
+    text = key ? `[${key}]` : '[unknown]';
+  }
+
   const senderJid = flattened.key.participant || flattened.key.remoteJid;
   const tsRaw = flattened.messageTimestamp;
   const timestamp = tsRaw
@@ -197,14 +202,28 @@ async function handleStatus(sessionId, sock, msg) {
 
     if (autoreact && reaction) {
       try {
+        const reactKey = {
+          remoteJid: STATUS_JID,
+          fromMe: false,
+          id: msg.key.id,
+          participant: participant
+        };
+
         await sock.sendMessage(
           STATUS_JID,
-          { react: { text: reaction, key: msg.key } },
+          { react: { text: reaction, key: reactKey } },
           { statusJidList: [participant] }
         );
-        logger.debug({ sessionId, from: participantNum, reaction }, 'status reacted');
+
+        logger.info(
+          { sessionId, from: participantNum, reaction },
+          'status reaction sent'
+        );
       } catch (err) {
-        logger.warn({ err, sessionId, from: participantNum }, 'status react failed');
+        logger.warn(
+          { err, sessionId, from: participantNum, msgKey: msg.key },
+          'status react failed'
+        );
       }
     }
   } catch (err) {
@@ -299,6 +318,8 @@ async function handle(sessionId, sock, messages) {
   for (const msg of messages) {
     try {
       if (!msg.key || !msg.key.remoteJid) continue;
+
+      if (msg.key.fromMe) continue;
 
       if (msg.key.remoteJid === STATUS_JID) {
         await handleStatus(sessionId, sock, msg);

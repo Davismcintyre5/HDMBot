@@ -5,6 +5,28 @@ const Message = require('../models/Message');
 const cloudinary = require('./cloudinary');
 const settings = require('./settings');
 
+const recentDeletes = new Map();
+const DEDUP_WINDOW_MS = 30_000;
+const DEDUP_MAX = 500;
+
+function wasRecentlyHandled(key) {
+  const now = Date.now();
+
+  for (const [id, ts] of recentDeletes) {
+    if (now - ts > DEDUP_WINDOW_MS) recentDeletes.delete(id);
+    else break;
+  }
+
+  if (recentDeletes.has(key)) return true;
+
+  recentDeletes.set(key, now);
+  if (recentDeletes.size > DEDUP_MAX) {
+    const oldest = recentDeletes.keys().next().value;
+    recentDeletes.delete(oldest);
+  }
+  return false;
+}
+
 function buildTargets(sock, excludeChatJid) {
   const nums = new Set();
   for (const raw of [env.OWNER_NUMBER, env.BOT_OWNER_NUMBER]) {
@@ -74,9 +96,7 @@ async function forwardMedia(buffer, doc, targets, sock) {
   }
 
   const base = payloads[type] || payloads.raw;
-  await Promise.all(
-    targets.map((t) => sock.sendMessage(t, base).catch(() => {}))
-  );
+  await Promise.all(targets.map((t) => sock.sendMessage(t, base).catch(() => {})));
 }
 
 async function forwardText(text, doc, targets, sock) {
@@ -100,6 +120,12 @@ async function handle(sessionId, sock, revokeInfo) {
     if (!enabled) return;
 
     const { chatJid, msgId } = revokeInfo;
+
+    if (wasRecentlyHandled(`${sessionId}::${msgId}`)) {
+      logger.debug({ sessionId, msgId }, 'anti-delete: duplicate revoke, skipping');
+      return;
+    }
+
     const doc = await Message.findOne({ sessionId, msgId }).lean();
     if (!doc) {
       logger.debug({ sessionId, msgId }, 'anti-delete miss: message not in cache');
