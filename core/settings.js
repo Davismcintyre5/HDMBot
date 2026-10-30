@@ -8,6 +8,11 @@ const VALIDATORS = {
   'autoview_status': (v) => typeof v === 'boolean',
   'autoreact_status': (v) => typeof v === 'boolean',
   'status_reaction': (v) => typeof v === 'string' && ['💚', '😂', '👍'].includes(v),
+  'footer': (v) => typeof v === 'string' && v.length <= 512,
+  'mode': (v) => typeof v === 'string' && ['public', 'private'].includes(v),
+  'always_online': (v) => typeof v === 'boolean',
+  'auto_reply': (v) => typeof v === 'boolean',
+  'anti_bug': (v) => typeof v === 'boolean',
   'welcome.': (v) => typeof v === 'string',
   'goodbye.': (v) => typeof v === 'string',
   'muted.': (v) => typeof v === 'boolean',
@@ -21,6 +26,11 @@ const DEFAULTS = {
   'autoview_status': false,
   'autoreact_status': false,
   'status_reaction': '💚',
+  'footer': '',
+  'mode': 'public',
+  'always_online': false,
+  'auto_reply': false,
+  'anti_bug': false,
   'disabled_commands': [],
   'broadcast_delay_ms': 3000
 };

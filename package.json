@@ -7,7 +7,6 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "admin": "node scripts/admin.js",
-    "pwa": "node scripts/generate-pwa-assets.js",
     "install:all": "npm install && cd client && npm install",
     "build": "cd client && npm run build && cd ..",
     "build:start": "npm run build && npm start",
@@ -17,6 +16,7 @@
   "author": "Davix HDM",
   "license": "MIT",
   "dependencies": {
+    "@ecync/wsm": "^1.0.1",
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^6.7.9",
     "axios": "^1.7.9",

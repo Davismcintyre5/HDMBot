@@ -3,9 +3,6 @@ const mongoose = require('mongoose');
 const SessionSchema = new mongoose.Schema(
   {
     sessionId: { type: String, required: true, trim: true, lowercase: true },
-    creds: { type: mongoose.Schema.Types.Mixed, default: {} },
-    keys: { type: mongoose.Schema.Types.Mixed, default: {} },
-    version: { type: Number, default: 0 },
     status: {
       type: String,
       enum: ['active', 'inactive', 'logged_out'],

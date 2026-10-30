@@ -2,9 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const qrcode = require('qrcode');
 const pino = require('pino');
+const { useMongoAuthState } = require('@ecync/wsm');
 const {
   default: makeWASocket,
-  useMultiFileAuthState,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   Browsers
@@ -20,7 +20,6 @@ const Session = require('../models/Session');
 
 const sessions = new Map();
 const connecting = new Map();
-const debounceTimers = new Map();
 const silentLogger = pino({ level: 'silent' });
 
 function normalizeSessionId(sessionId) {
@@ -42,9 +41,6 @@ async function ensureSessionDoc(sessionId) {
       {
         $setOnInsert: {
           sessionId,
-          creds: {},
-          keys: {},
-          version: 0,
           status: 'inactive',
           'meta.platform': 'WhatsApp',
           'meta.botName': sessionId
@@ -55,90 +51,6 @@ async function ensureSessionDoc(sessionId) {
   } catch (err) {
     logger.warn({ err, sessionId }, 'ensureSessionDoc failed');
   }
-}
-
-async function hydrateAuthState(sessionId) {
-  const dir = sessionDir(sessionId);
-  ensureDir(dir);
-
-  const credsFile = path.join(dir, 'creds.json');
-  if (fs.existsSync(credsFile)) return;
-
-  const doc = await Session.findOne({ sessionId }).lean();
-  if (!doc || !doc.creds || Object.keys(doc.creds).length === 0) return;
-
-  fs.writeFileSync(credsFile, JSON.stringify(doc.creds, null, 2));
-  if (doc.keys) {
-    for (const [key, value] of Object.entries(doc.keys)) {
-      fs.writeFileSync(path.join(dir, `${key}.json`), JSON.stringify(value, null, 2));
-    }
-  }
-  logger.info({ sessionId }, 'auth state restored from MongoDB');
-}
-
-async function backupToMongo(sessionId, phoneNumber) {
-  const dir = sessionDir(sessionId);
-  const credsFile = path.join(dir, 'creds.json');
-  if (!fs.existsSync(credsFile)) return;
-
-  try {
-    const creds = JSON.parse(fs.readFileSync(credsFile, 'utf8'));
-    if (!creds || !creds.me) return;
-
-    const keys = {};
-    for (const file of fs.readdirSync(dir)) {
-      if (file === 'creds.json' || !file.endsWith('.json')) continue;
-      try {
-        keys[file.replace('.json', '')] = JSON.parse(
-          fs.readFileSync(path.join(dir, file), 'utf8')
-        );
-      } catch {}
-    }
-
-    await Session.findOneAndUpdate(
-      { sessionId },
-      {
-        $set: {
-          creds,
-          keys,
-          status: 'active',
-          'meta.lastConnected': new Date(),
-          'meta.phoneNumber': phoneNumber || '',
-          'meta.nextAttemptAt': null
-        },
-        $inc: { version: 1 }
-      },
-      { upsert: true }
-    );
-  } catch (err) {
-    logger.warn({ err, sessionId }, 'backupToMongo failed');
-  }
-}
-
-function scheduleBackup(sessionId) {
-  const existing = debounceTimers.get(sessionId);
-  if (existing) clearTimeout(existing);
-  const timer = setTimeout(() => {
-    debounceTimers.delete(sessionId);
-    const runtime = sessions.get(sessionId);
-    const phone = runtime ? runtime.phoneNumber : '';
-    backupToMongo(sessionId, phone).catch((err) =>
-      logger.warn({ err, sessionId }, 'scheduled backup failed')
-    );
-  }, env.BACKUP_DEBOUNCE_MS);
-  if (timer.unref) timer.unref();
-  debounceTimers.set(sessionId, timer);
-}
-
-async function flushBackup(sessionId) {
-  const pending = debounceTimers.get(sessionId);
-  if (pending) {
-    clearTimeout(pending);
-    debounceTimers.delete(sessionId);
-  }
-  const runtime = sessions.get(sessionId);
-  const phone = runtime ? runtime.phoneNumber : '';
-  await backupToMongo(sessionId, phone);
 }
 
 function setQR(sessionId, qrString) {
@@ -176,7 +88,22 @@ async function onConnected(sessionId, phoneNumber) {
   runtime.attempts = 0;
   runtime.connectedAt = new Date();
 
-  await backupToMongo(sessionId, phoneNumber);
+  try {
+    await Session.findOneAndUpdate(
+      { sessionId },
+      {
+        $set: {
+          status: 'active',
+          'meta.lastConnected': new Date(),
+          'meta.phoneNumber': phoneNumber || '',
+          'meta.nextAttemptAt': null
+        }
+      },
+      { upsert: true }
+    );
+  } catch (err) {
+    logger.warn({ err, sessionId }, 'Session meta update failed');
+  }
 
   socket.emitQRUpdate(sessionId, {
     qr: null,
@@ -254,13 +181,12 @@ async function connect(sessionIdRaw) {
 
   const previous = sessions.get(sessionId);
   const lastQR = previous?.qr || null;
-  const lastRawQR = previous?.rawQR || null;
 
   const runtime = {
     sock: null,
     status: 'connecting',
     qr: lastQR,
-    rawQR: lastRawQR,
+    rawQR: null,
     qrScanned: previous?.qrScanned || false,
     phoneNumber: previous?.phoneNumber || '',
     attempts: previous?.attempts || 0,
@@ -272,10 +198,20 @@ async function connect(sessionIdRaw) {
 
   const task = (async () => {
     await ensureSessionDoc(sessionId);
-    await hydrateAuthState(sessionId);
 
     const dir = sessionDir(sessionId);
-    const { state: authState, saveCreds } = await useMultiFileAuthState(dir);
+    ensureDir(dir);
+
+    const { state: authState, saveCreds } = await useMongoAuthState(
+      env.MONGODB_URI,
+      {
+        session: sessionId,
+        collectionName: 'whatsapp_sessions',
+        maxRetries: 10,
+        retryRequestDelayMs: 500
+      }
+    );
+
     const { version } = await fetchLatestBaileysVersion();
 
     logger.info({ sessionId, baileys: version.join('.') }, 'connecting session');
@@ -306,14 +242,7 @@ async function connect(sessionIdRaw) {
       );
     } catch {}
 
-    sock.ev.on('creds.update', async () => {
-      try {
-        await saveCreds();
-      } catch (err) {
-        logger.warn({ err, sessionId }, 'saveCreds failed');
-      }
-      scheduleBackup(sessionId);
-    });
+    sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', (update) =>
       connectionHandler
@@ -375,7 +304,6 @@ async function disconnect(sessionIdRaw, { logout = false } = {}) {
       else runtime.sock.end(new Error('disconnect'));
     } catch {}
   }
-  await flushBackup(sessionId);
   sessions.delete(sessionId);
   state.clearSession(sessionId);
   socket.emitSessionStatus({ sessions: listSessions() });
@@ -395,16 +323,9 @@ async function shutdownAll() {
     try {
       if (runtime.sock) runtime.sock.end(new Error('shutdown'));
     } catch {}
-    try {
-      await flushBackup(sessionId);
-    } catch (err) {
-      logger.warn({ err, sessionId }, 'flush on shutdown failed');
-    }
   }
   sessions.clear();
   connecting.clear();
-  for (const timer of debounceTimers.values()) clearTimeout(timer);
-  debounceTimers.clear();
 }
 
 async function boot() {
@@ -461,12 +382,6 @@ function getQR(sessionIdRaw) {
   return runtime ? runtime.qr : null;
 }
 
-function getRawQR(sessionIdRaw) {
-  const sessionId = normalizeSessionId(sessionIdRaw);
-  const runtime = sessions.get(sessionId);
-  return runtime ? runtime.rawQR : null;
-}
-
 function isQRScanned(sessionIdRaw) {
   const sessionId = normalizeSessionId(sessionIdRaw);
   const runtime = sessions.get(sessionId);
@@ -492,8 +407,8 @@ function listSessions() {
 }
 
 async function syncToMongo(sessionIdRaw) {
-  const sessionId = normalizeSessionId(sessionIdRaw);
-  await flushBackup(sessionId);
+  // No-op: auth state is already persisted by useMongoAuthState.
+  // Kept for API compatibility.
 }
 
 module.exports = {
@@ -506,7 +421,6 @@ module.exports = {
   getStatus,
   isConnected,
   getQR,
-  getRawQR,
   isQRScanned,
   listSessions,
   syncToMongo,
