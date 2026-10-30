@@ -92,7 +92,9 @@ async function resolvePermissions(sessionId, sock, chatJid, senderJid, msg) {
 
   const isOwnerByNum = !!senderNum && (senderNum === ownerNum || senderNum === botOwnerNum);
   const isOwnerByLid = !!ownerLidJid && senderJid === ownerLidJid;
-  const isOwner = isOwnerByNum || isOwnerByLid;
+  const isOwnerByFromMe = !!msg?.key?.fromMe;
+
+  const isOwner = isOwnerByNum || isOwnerByLid || isOwnerByFromMe;
 
   let isAdmin = false;
   let isBotAdmin = false;
