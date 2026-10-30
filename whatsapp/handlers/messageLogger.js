@@ -2,6 +2,8 @@ const logger = require('../../utils/logger');
 const socket = require('../../config/socket');
 const Message = require('../../models/Message');
 
+const REAL_MEDIA_TYPES = new Set(['image', 'video', 'audio', 'document', 'sticker']);
+
 async function log(sessionId, flattened, classification, extras) {
   const { type, isViewOnce } = classification;
   const rawKey = {
@@ -10,6 +12,17 @@ async function log(sessionId, flattened, classification, extras) {
     id: flattened.key.id,
     participant: flattened.key.participant || null
   };
+
+  const media = REAL_MEDIA_TYPES.has(type)
+    ? {
+        cloudinaryUrl: null,
+        cloudinaryPublicId: null,
+        cloudinaryResourceType: null,
+        mimetype: extras.mimetype || null,
+        fileName: extras.fileName || null,
+        sizeBytes: extras.sizeBytes || null
+      }
+    : undefined;
 
   const doc = {
     sessionId,
@@ -20,14 +33,7 @@ async function log(sessionId, flattened, classification, extras) {
     timestamp: extras.timestamp || new Date(),
     type,
     text: extras.text || null,
-    media: {
-      cloudinaryUrl: null,
-      cloudinaryPublicId: null,
-      cloudinaryResourceType: null,
-      mimetype: extras.mimetype || null,
-      fileName: extras.fileName || null,
-      sizeBytes: extras.sizeBytes || null
-    },
+    media,
     wrappers: extras.wrappers || [],
     rawKey
   };

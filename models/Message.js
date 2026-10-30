@@ -1,6 +1,22 @@
 const mongoose = require('mongoose');
 const env = require('../config/env');
 
+const MediaSchema = new mongoose.Schema(
+  {
+    cloudinaryUrl: { type: String, default: null },
+    cloudinaryPublicId: { type: String, default: null },
+    cloudinaryResourceType: {
+      type: String,
+      enum: ['image', 'video', 'raw', null],
+      default: null
+    },
+    mimetype: { type: String, default: null },
+    fileName: { type: String, default: null },
+    sizeBytes: { type: Number, default: null }
+  },
+  { _id: false }
+);
+
 const MessageSchema = new mongoose.Schema(
   {
     sessionId: { type: String, required: true, index: true },
@@ -16,12 +32,8 @@ const MessageSchema = new mongoose.Schema(
     },
     text: { type: String, default: null },
     media: {
-      cloudinaryUrl: { type: String, default: null },
-      cloudinaryPublicId: { type: String, default: null },
-      cloudinaryResourceType: { type: String, enum: ['image', 'video', 'raw', null], default: null },
-      mimetype: { type: String, default: null },
-      fileName: { type: String, default: null },
-      sizeBytes: { type: Number, default: null }
+      type: MediaSchema,
+      default: undefined
     },
     wrappers: { type: [String], default: [] },
     rawKey: {

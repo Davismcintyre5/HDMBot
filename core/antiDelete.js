@@ -8,6 +8,7 @@ const settings = require('./settings');
 const recentDeletes = new Map();
 const DEDUP_WINDOW_MS = 30_000;
 const DEDUP_MAX = 500;
+const MEDIA_TYPES = new Set(['image', 'video', 'audio', 'document', 'sticker']);
 
 function wasRecentlyHandled(key) {
   const now = Date.now();
@@ -54,6 +55,17 @@ function chatDisplay(doc) {
   }
   const num = jid.fromJid(doc.chatJid);
   return num || doc.chatJid;
+}
+
+function hasUsableMedia(doc) {
+  if (!doc || !doc.media) return false;
+  if (doc.media.cloudinaryUrl) return true;
+  if (!MEDIA_TYPES.has(doc.type)) return false;
+  if (!doc.media.mimetype && !doc.media.fileName && !doc.media.sizeBytes &&
+      !doc.media.cloudinaryResourceType) {
+    return false;
+  }
+  return true;
 }
 
 async function forwardMedia(buffer, doc, targets, sock) {
@@ -139,8 +151,9 @@ async function handle(sessionId, sock, revokeInfo) {
     }
 
     let recovered = false;
+    const usableMedia = hasUsableMedia(doc);
 
-    if (doc.media && doc.media.cloudinaryUrl) {
+    if (usableMedia && doc.media && doc.media.cloudinaryUrl) {
       try {
         const buffer = await cloudinary.fetchBuffer(doc.media.cloudinaryUrl);
         await forwardMedia(buffer, doc, targets, sock);
@@ -148,9 +161,14 @@ async function handle(sessionId, sock, revokeInfo) {
       } catch (err) {
         logger.warn({ err, msgId }, 'cloudinary fetch failed');
       }
-    } else if (doc.media) {
+    }
+
+    if (!recovered && usableMedia) {
       try {
-        const buffer = await sock.downloadMediaMessage({ key: doc.rawKey, message: {} });
+        const buffer = await sock.downloadMediaMessage({
+          key: doc.rawKey,
+          message: doc.rawMessage || {}
+        });
         if (buffer) {
           await forwardMedia(buffer, doc, targets, sock);
           recovered = true;
@@ -158,9 +176,15 @@ async function handle(sessionId, sock, revokeInfo) {
       } catch (err) {
         logger.warn({ err, msgId }, 'live download fallback failed');
       }
-    } else if (doc.text) {
-      await forwardText(doc.text, doc, targets, sock);
-      recovered = true;
+    }
+
+    if (!recovered && doc.text) {
+      try {
+        await forwardText(doc.text, doc, targets, sock);
+        recovered = true;
+      } catch (err) {
+        logger.warn({ err, msgId }, 'text forward failed');
+      }
     }
 
     if (!recovered) {
@@ -178,11 +202,22 @@ async function handle(sessionId, sock, revokeInfo) {
           sock.sendMessage(t, { text: fallback, mentions: [doc.senderJid] }).catch(() => {})
         )
       );
-      logger.debug({ sessionId, msgId, type: doc.type }, 'anti-delete: no content recovered');
+
+      logger.debug(
+        {
+          sessionId,
+          msgId,
+          type: doc.type,
+          hasMedia: !!doc.media,
+          mediaKeys: doc.media ? Object.keys(doc.media) : null,
+          hasText: !!doc.text
+        },
+        'anti-delete: no content recovered'
+      );
     }
   } catch (err) {
     logger.error({ err, sessionId }, 'anti-delete handle failed');
   }
 }
 
-module.exports = { handle, buildTargets };
+module.exports = { handle, buildTargets, hasUsableMedia };
